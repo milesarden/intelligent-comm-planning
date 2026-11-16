@@ -230,6 +230,7 @@ import { onBeforeRouteLeave } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useFrozenCoverage } from '../composables/useFrozenCoverage';
 import { coverageBandwidthChoices } from '../services/frozen-coverage-decode';
+import { terrainStorageKey } from '../services/terrain-storage';
 import DecisionDialog from './DecisionDialog.vue';
 import type { Decision, DecisionRequest } from '../types/resource-edit';
 import FrozenCoverageBandwidthEditor, { type CoverageBandwidthChange, type CoverageBandwidthRow } from './FrozenCoverageBandwidthEditor.vue';
@@ -301,7 +302,7 @@ const retainedSelection=shallowRef<SelectionRequest|null>(null);
 const selectionConfirmed=ref(false);
 const leaveError=ref(''),leaveDecision=ref<DecisionRequest|null>(null);
 let resolveLeave:((value:Decision)=>void)|undefined;
-const selectionKey=()=>`frozen-coverage.bandwidth-pending:${JSON.stringify([binding.value.accountId,binding.value.query])}`;
+const selectionKey=()=>terrainStorageKey(`frozen-coverage.bandwidth-pending:${JSON.stringify([binding.value.accountId,binding.value.query])}`);
 function storeSelection(value:SelectionRequest|null,rejected=false){
   try{if(value)sessionStorage.setItem(selectionKey(),JSON.stringify({...value,rejected}));else sessionStorage.removeItem(selectionKey());}
   catch{ /* 内存与离开保护仍保留原号；不把存储失败当作服务端成功。 */ }

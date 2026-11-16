@@ -1,6 +1,6 @@
 <template>
   <section class="gis-situation" aria-label="GIS 态势只读地图">
-    <PlainTerrainMap v-if="!plainWorkspace && terrainScene === 'plain'" />
+    <PlainTerrainMap v-if="!env.unifiedTerrain && !plainWorkspace && terrainScene === 'plain'" />
     <template v-else>
     <MapCanvas
       ref="map"
@@ -86,8 +86,8 @@
         <p v-if="model.error" class="map-notice error" role="alert">{{ model.error }}</p>
         <p v-else-if="model.notice" class="map-notice" role="status">{{ model.notice }}</p>
       </template>
-      <span v-if="plainWorkspace" class="terrain-scene-control">地形场景　平原</span>
-      <label v-else class="terrain-scene-control">
+      <span v-if="!env.unifiedTerrain && plainWorkspace" class="terrain-scene-control">地形场景　平原</span>
+      <label v-else-if="!env.unifiedTerrain" class="terrain-scene-control">
         地形场景
         <select v-model="terrainScene">
           <option value="hills">丘陵</option>

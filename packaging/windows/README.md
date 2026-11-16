@@ -16,6 +16,12 @@ python packaging/windows/build_portable.py --python-embed F:/build/python-3.12.4
 
 输出目录必须不存在。构建脚本同时生成 ZIP、SHA256 和包内逐文件清单；不会清理或覆盖已有包。ZIP 不含运行数据目录、开发数据库、个人日志、私有密钥、旧前端、Node.js 或 `node_modules`。不上传二进制大包到 Git 源码历史。
 
+### 丘陵和平原统一包
+
+为两种场景构建前端时统一设置 `VITE_UNIFIED_TERRAIN=1`，并分别设置 `VITE_TERRAIN_SCENE=hills` 和 `VITE_TERRAIN_SCENE=plain`。丘陵的 API 路径为 `/api/v1`，平原为 `/scenes/plain/api/v1`。然后使用 `build_unified_portable.py`，传入两份已核验的场景基包、对应 SHA-256、编译目录和新的 ZIP 路径。
+
+使用者解压这一份 ZIP 后启动一次。两个场景共用本机地址和 Python 运行环境，场景数据保存在各自的工作区。同摘要的地图瓦片和字体只打包一份。
+
 ## 首次使用例程
 
 成品ZIP根目录提供 `首次使用演示.html`，离线说明按初次登录、任务导入、真实规划、方案保存确认、故障导入及诊断、知识反馈审核发布的顺序操作。两份任务CSV必须同时选择；输入采用包内初始频池，不携带开发库额外频点排除编号。三例故障CSV须绑定本次已确认网络并核对对象，不引用开发电脑的PLAN、诊断运行或知识版本。

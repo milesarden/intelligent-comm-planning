@@ -1,4 +1,8 @@
 import { ApiError } from '../services/types';
+import { plainTerrainApiBase } from './terrain-scenes';
+
+const plainTerrain = import.meta.env.VITE_TERRAIN_SCENE === 'plain';
+const unifiedTerrain = import.meta.env.VITE_UNIFIED_TERRAIN === '1';
 
 // 配置错误应可见，不能静默降级为 Mock。
 export const env = {
@@ -6,8 +10,9 @@ export const env = {
   // 示例数据标识独立于传输协议，HTTP 示例环境也可显式开启。
   sampleData: import.meta.env.VITE_SAMPLE_DATA === 'true' ||
     (import.meta.env.VITE_SAMPLE_DATA !== 'false' && (import.meta.env.VITE_DATA_MODE ?? 'mock') === 'mock'),
-  apiBaseUrl: import.meta.env.VITE_API_BASE_URL ?? '/api/v1',
-  plainTerrain: import.meta.env.VITE_TERRAIN_SCENE === 'plain',
+  apiBaseUrl: import.meta.env.VITE_API_BASE_URL ?? (plainTerrain && unifiedTerrain ? plainTerrainApiBase : '/api/v1'),
+  plainTerrain,
+  unifiedTerrain,
 } as const;
 
 // 认证只允许同源 API；根相对路径可在隔离测试中校验，不猜测真实后端地址。

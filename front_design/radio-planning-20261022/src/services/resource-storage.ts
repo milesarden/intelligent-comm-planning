@@ -6,6 +6,7 @@ import { ApiError } from './types';
 import { emptyTasks, validateTaskWorkspace } from './task-validation';
 import { completeResources } from '../mocks/resource-presets';
 import { validDeviceHistories } from './device-maintenance';
+import { terrainStorage } from './terrain-storage';
 
 export const initialMeta = (): ResourceMeta => ({
   taskWorkspace:emptyTasks(),
@@ -22,7 +23,7 @@ export const initialMeta = (): ResourceMeta => ({
 // 生产仅访问浏览器存储；测试必须显式注入，不提供内存成功降级。
 export function browserResourceStorage(): ResourceStorage {
   try {
-    return window.localStorage;
+    return terrainStorage(window.localStorage);
   } catch {
     throw new ApiError('浏览器本地存储不可用，请检查访问权限', 'STORAGE_UNAVAILABLE');
   }

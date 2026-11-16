@@ -1,5 +1,6 @@
 import { computed,onScopeDispose,ref,shallowRef,watch } from 'vue';
 import { ApiError } from '../services/types';
+import { terrainStorageKey } from '../services/terrain-storage';
 import { coverageBandwidthChoices,coverageParameters,readFrozenBandwidthSelection } from '../services/frozen-coverage-decode';
 import type { FrozenCoverageAnchor,FrozenCoverageBandwidthChoice,FrozenCoverageBandwidthOptions,FrozenCoverageBandwidthSelection,FrozenCoverageCache,FrozenCoverageClient,FrozenCoverageInput,FrozenCoverageJob,FrozenCoverageOverlay,FrozenCoverageQuery,FrozenCoverageDisplay } from '../types/frozen-coverage';
 type Pending={requestId:string;query:FrozenCoverageQuery;parameters:FrozenCoverageInput;jobId:string|null};
@@ -26,19 +27,20 @@ export function useFrozenCoverage(options:{query:()=>FrozenCoverageQuery|null;pa
     return base?{...base,...selection?{bandwidthSelection:{selectionId:selection.selection_id,selectionHash:selection.selection_hash}}:{}}:null;
   };
   const key=()=>JSON.stringify([options.owner(),query(),options.parameters()]);
+  const storedKey=(prefix:string)=>terrainStorageKey(prefix+key());
   const storage=()=>{try{return options.storage?.()??(typeof sessionStorage==='undefined'?undefined:sessionStorage);}catch{return undefined;}};
   function remember(value:Pending|null) {
-    const name='frozen-coverage.pending:'+key();pending.value=value;
+    const name=storedKey('frozen-coverage.pending:');pending.value=value;
     if(value)retained.set(name,structuredClone(value));else retained.delete(name);
     try{if(value)storage()?.setItem(name,JSON.stringify(value));else storage()?.removeItem(name);}catch{ /* 原号仍保留在本标签内存，不把存储失败当作提交失败。 */ }
   }
   function recall() {
-    const name='frozen-coverage.pending:'+key();let value:Pending|undefined=retained.get(name);
+    const name=storedKey('frozen-coverage.pending:');let value:Pending|undefined=retained.get(name);
     try{if(!value){const raw=storage()?.getItem(name);if(raw)value=JSON.parse(raw) as Pending;}}catch{return null;}
     return value&&typeof value.requestId==='string'&&value.requestId.length>0&&JSON.stringify(value.query)===JSON.stringify(query())&&JSON.stringify(value.parameters)===JSON.stringify(options.parameters())?value:null;
   }
-  function rememberJob(id:string){const name='frozen-coverage.job:'+key();knownJobId.value=id;knownJobs.set(name,id);try{storage()?.setItem(name,id);}catch{ /* 已确认作业仍可在本标签回读。 */ }}
-  function recallJob(){const name='frozen-coverage.job:'+key();let id=knownJobs.get(name);try{id??=storage()?.getItem(name)??undefined;}catch{ /* 不用其他身份或来源的记录回填。 */ }return id&&/^FCJ-[a-f0-9]{32}$/.test(id)?id:'';}
+  function rememberJob(id:string){const name=storedKey('frozen-coverage.job:');knownJobId.value=id;knownJobs.set(name,id);try{storage()?.setItem(name,id);}catch{ /* 已确认作业仍可在本标签回读。 */ }}
+  function recallJob(){const name=storedKey('frozen-coverage.job:');let id=knownJobs.get(name);try{id??=storage()?.getItem(name)??undefined;}catch{ /* 不用其他身份或来源的记录回填。 */ }return id&&/^FCJ-[a-f0-9]{32}$/.test(id)?id:'';}
   function cancelRead(){serial++;control?.abort();control=null;clearTimeout(timer);timer=undefined;busy.value=false;}
   const overlay=computed<FrozenCoverageOverlay|null>(()=>visible.value&&cache.value?.state==='HIT'&&cache.value.result&&selectedDeviceId.value?{anchor:cache.value.anchor,result:cache.value.result,deviceId:selectedDeviceId.value,...['V01-5','V01-6'].includes(cache.value.anchor.engine_version)?{display:display.value}:{},...cache.value.bandwidth_selection_id&&cache.value.bandwidth_selection_hash?{bandwidthSelection:{selectionId:cache.value.bandwidth_selection_id,selectionHash:cache.value.bandwidth_selection_hash}}:{}}:null);
   const devices=computed(()=>cache.value?.result?.devices??[]);

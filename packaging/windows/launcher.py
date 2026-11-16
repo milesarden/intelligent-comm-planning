@@ -215,8 +215,8 @@ def available_state():
     state = read_state()
     if state and state.get("state") == "RUNNING":
         try:
-            control(state)
-            return state
+            current = control(state)
+            return {**state, "plain_failed": True} if current.get("state") == "PLAIN_FAILED" else state
         except (OSError, ValueError, KeyError):
             pass
     return None
@@ -377,14 +377,53 @@ def acquire_service_lock(lock):
     return True
 
 
-def serve():
+def unified_package():
+    try:
+        manifest = json.loads((ROOT / "package-manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(manifest, dict) and manifest.get("terrain_scene") == "unified"
+
+
+def check_package_frontends():
     check_frontend_assets()
+    if unified_package():
+        check_frontend_assets(ROOT / "scenes/plain/app/front_design/radio-planning-20261022/dist")
+
+
+def unified_runtime_module():
+    # Windows 的嵌入式 Python 可能没有将 launcher.py 同目录加入 sys.path。
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    import unified_runtime
+    return unified_runtime
+
+
+def configure_plain_worker(public_port):
+    """只在独立子进程切换应用根，移除共享运行时 _pth 中的丘陵应用路径。"""
+    global APP, DATA
+    hills_paths = {APP, APP / "algorithm-service", APP / "scripts"}
+    sys.path[:] = [entry for entry in sys.path if Path(entry).resolve() not in hills_paths]
+    APP = (ROOT / "scenes/plain/app").resolve()
+    if APP != ROOT / "scenes/plain/app":
+        raise RuntimeError("平原场景的应用目录不应重定向到其他位置")
+    DATA = APP / "data/runtime"
+    secure_data_directory()
+    config = settings()
+    configure(public_port, config["request_key"])
+    os.chdir(APP)
+    initialize(config)
+
+
+def serve():
+    check_package_frontends()
     secure_data_directory()
     with (DATA / "service.lock").open("a+b") as lock:
         if not acquire_service_lock(lock):
             return 0  # 另一启动入口已经持有本包锁。
         listener = None
         state = None
+        plain_scene = None
         clean_shutdown = False
         try:
             listener, port = bind_listener()
@@ -397,12 +436,16 @@ def serve():
             from starlette.routing import Route
             import uvicorn
             app = create_delivery_app()
-            server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, access_log=False, proxy_headers=False,
+            shutdown = {"requested": False, "writes": 0}
+            delivery_app = app
+            if unified_package():
+                plain_scene = unified_runtime_module().PlainScene(ROOT, DATA, port, shutdown)
+                plain_scene.start()
+                delivery_app = plain_scene.dispatch(app)
+            server = uvicorn.Server(uvicorn.Config(delivery_app, host="127.0.0.1", port=port, access_log=False, proxy_headers=False,
                                                   loop="asyncio", http="h11", timeout_graceful_shutdown=30))
             state = {"root": str(ROOT), "port": port, "pid": os.getpid(), "instance": secrets.token_hex(16),
                      "token": secrets.token_urlsafe(32), "state": "RUNNING", "started_at": time.time()}
-
-            shutdown = {"requested": False, "writes": 0}
 
             @app.middleware("http")
             async def write_guard(request, call_next):
@@ -418,14 +461,20 @@ def serve():
                         shutdown["writes"] -= 1
 
             async def endpoint(request):
-                if not hmac.compare_digest(request.headers.get("X-Portable-Token", ""), state["token"]):
+                supplied = request.headers.get("X-Portable-Token", "")
+                if not supplied.isascii() or not hmac.compare_digest(supplied, state["token"]):
                     return JSONResponse({"error": "forbidden"}, status_code=403)
                 if request.url.path.endswith("/stop"):
+                    if shutdown["requested"]:
+                        return JSONResponse({"instance": state["instance"], "state": "STOPPING"})
                     shutdown["requested"] = True
-                    if shutdown["writes"] or active_algorithm_threads():
+                    if (shutdown["writes"] or active_algorithm_threads()
+                            or plain_scene is not None and not await plain_scene.request_stop()):
                         shutdown["requested"] = False
                         return JSONResponse({"error": "BUSY", "instance": state["instance"]}, status_code=409)
                     server.should_exit = True
+                elif plain_scene is not None and plain_scene.process.poll() is not None:
+                    return JSONResponse({"instance": state["instance"], "state": "PLAIN_FAILED"})
                 return JSONResponse({"instance": state["instance"], "state": "STOPPING" if server.should_exit else "RUNNING"})
 
             app.router.routes[0:0] = [Route("/__portable/status", endpoint, methods=["GET"]),
@@ -433,11 +482,15 @@ def serve():
             write_json(STATE, state)
             server.run(sockets=[listener])
             clean_shutdown = server.started and not server.lifespan.shutdown_failed and not server.lifespan.error_occurred and not active_algorithm_threads()
+            if plain_scene is not None:
+                clean_shutdown = plain_scene.finish() and clean_shutdown
             if not server.started:
                 raise RuntimeError("服务启动失败，请查看 user_data/logs")
             if not clean_shutdown:
                 raise RuntimeError("后台任务未确认安全退出，停止失败，请查看运行日志")
         finally:
+            if plain_scene is not None:
+                plain_scene.cleanup()
             if listener:
                 listener.close()
             if state:
@@ -482,9 +535,11 @@ def open_entry(url):
 
 
 def start(open_browser=True, timeout=180):
-    check_frontend_assets()
+    check_package_frontends()
     secure_data_directory()
     current = available_state()
+    if current and current.get("plain_failed"):
+        raise RuntimeError("平原场景进程已退出，请查看启动日志，停止本包后重启")
     if not current:
         logs = DATA / "logs"
         logs.mkdir(exist_ok=True)
@@ -532,15 +587,21 @@ def stop(timeout=60):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("start", "stop", "serve"))
+    parser.add_argument("action", choices=("start", "stop", "serve", "plain-worker"))
     parser.add_argument("--no-browser", action="store_true", help="自动化验收不打开用户浏览器")
+    parser.add_argument("--scene-setup", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if os.name != "nt":
         if sys.platform != "linux":
             parser.error("此启动入口仅支持 Windows 和 Linux")
         os.umask(0o077)
     try:
-        if args.action == "serve":
+        if args.action == "plain-worker":
+            if not args.scene_setup or not unified_package():
+                raise RuntimeError("本包未提供平原场景子进程")
+            unified_runtime_module().run_plain_worker(
+                ROOT, DATA, args.scene_setup, configure_plain_worker, active_algorithm_threads, write_json)
+        elif args.action == "serve":
             serve()
         elif args.action == "stop":
             stop()

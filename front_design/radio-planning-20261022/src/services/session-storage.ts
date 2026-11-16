@@ -3,9 +3,10 @@ import type { ResourceStorage } from '../types/resource-edit';
 import type { SessionRecord } from '../types/system';
 import { ApiError } from './types';
 import { systemAssert,textValid,validTime } from './system-validation';
+import { terrainStorage } from './terrain-storage';
 
 export function browserSessionStorage():ResourceStorage {
-  try{return window.sessionStorage;}catch{throw new ApiError('标签页会话存储不可用','SESSION_READ_FAILED');}
+  try{return terrainStorage(window.sessionStorage);}catch{throw new ApiError('标签页会话存储不可用','SESSION_READ_FAILED');}
 }
 function validateSession(s:SessionRecord) {
   systemAssert(s&&s.schemaVersion===1&&['ACTIVE','SIGNED_OUT'].includes(s.state)&&textValid(s.id)&&textValid(s.accountId)&&textValid(s.epoch)&&validTime(s.loginAt),'会话记录无效，请重新登录','SESSION_CORRUPT');
