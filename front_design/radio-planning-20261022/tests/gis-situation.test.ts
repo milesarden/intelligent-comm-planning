@@ -6,6 +6,8 @@ import type { PlanningPlanSummary } from '../src/types/planning-api';
 import type { TerrainBasemap } from '../src/services/terrain-basemap';
 import type { GisNetwork, GisPlanSurface } from '../src/types/gis-plan';
 import type { FrozenCoverageCache } from '../src/types/frozen-coverage';
+import plainTerrain from '../src/assets/terrain/plain.json';
+import type { ResourceReadWorkspace } from '../src/types/resource-read';
 
 function row(id = 'P1', state: PlanningPlanSummary['state'] = 'SAVED', savedAt = '2026-11-03T08:00:00+08:00'): PlanningPlanSummary {
   return { id, taskId: 'T1', name: `方案 ${id}`, version: 'V2', state, current: false, sourceChanged: false, savedAt };
@@ -38,6 +40,24 @@ function fixture() {
 }
 
 describe('GIS只读首页受控示例与整帧刷新', () => {
+  it('平原工作区首屏无丘陵台站，拒绝其他 DEM 并使用同版平原底图', async () => {
+    const { services, terrain } = fixture();
+    const hillTerrain = gisExampleFrame().terrain;
+    const workspace = (source: ResourceReadWorkspace['terrain']) => ({ terrain: source } as ResourceReadWorkspace);
+    const loadResourceReadContext = vi.fn().mockResolvedValueOnce(workspace(hillTerrain))
+      .mockResolvedValueOnce(workspace({ ...hillTerrain, sourceSha256: plainTerrain.sourceSha256 }));
+    const model = createGisSituation({ ...services, resources: { loadResourceReadContext, queryResourceInterferences: vi.fn() } }, true);
+    expect(model.frame.value.label).toBe('平原地形');
+    expect(model.frame.value.network.nodes).toHaveLength(0);
+    await model.initialize();
+    expect(terrain).not.toHaveBeenCalled();
+    expect(model.error.value).toContain('平原 DEM 版本不匹配');
+    await model.initialize();
+    expect(terrain).toHaveBeenCalledOnce();
+    expect(model.frame.value.terrain.sourceSha256).toBe(plainTerrain.sourceSha256);
+    expect(model.frame.value.basemap).not.toBeNull();
+    model.stop();
+  });
   it('空库首次进入立即有受控示例，不查询用户方案、不计算、不写入', () => {
     const { model, services, terrain } = fixture();
     expect(model.frame.value.example).toBe(true);

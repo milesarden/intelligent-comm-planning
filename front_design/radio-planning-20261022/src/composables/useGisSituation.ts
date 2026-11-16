@@ -1,6 +1,7 @@
 import { computed, onBeforeUnmount, ref, shallowRef } from 'vue';
 import example from '../config/gis-situation-example.json';
 import exampleCoverage from '../config/gis-situation-coverage.json';
+import plainTerrain from '../assets/terrain/plain.json';
 import { env } from '../config/env';
 import { previewService } from '../services';
 import { collaborationHttp } from '../services/http';
@@ -67,11 +68,28 @@ export function gisExampleFrame(): GisSituationFrame {
   };
 }
 
+function initialFrame(plain: boolean): GisSituationFrame {
+  if (!plain) return gisExampleFrame();
+  return {
+    key: 'plain-terrain', label: '平原地形', version: '120 km × 120 km', example: false,
+    network: {
+      identity: { plan_id: 'PLAIN-TERRAIN', task_id: 'PLAIN-TERRAIN', snapshot_id: 'PLAIN-TERRAIN',
+        input_version: '', condition_version: '', resource_revision: '', state: 'REFERENCE',
+        source_changed: false, data_origin: 'SYNTHETIC_INTEGRATION', source: 'SR4' },
+      nodes: [], devices: [], links: [], demands: [], routes: [], paths_state: 'missing', paths_message: '',
+    },
+    terrain: { source: plainTerrain.source, sourceSha256: plainTerrain.sourceSha256,
+      bounds: [...plainTerrain.extent] as ResourceTerrain['bounds'] },
+    basemap: null, coverage: null, interferences: [],
+    notice: '请进入网络规划载入平原任务例程。方案转正后可在本页查看站点和规划链路。',
+  };
+}
+
 const reasonText = (reason: unknown) => reason instanceof Error ? reason.message : '读取失败，请重试';
 
 // 新帧的网络、地形和覆盖只在核对完毕后一起发布；失败及迟到响应均不清空已显示的帧。
-export function createGisSituation(services?: GisSituationServices) {
-  const frame = shallowRef<GisSituationFrame>(gisExampleFrame());
+export function createGisSituation(services?: GisSituationServices, plain = false) {
+  const frame = shallowRef<GisSituationFrame>(initialFrame(plain));
   const catalog = shallowRef<ApiPage<PlanningPlanSummary> | null>(null);
   const busy = ref(false), listing = ref(false), error = ref(''), notice = ref(''), catalogError = ref('');
   const selectedDeviceId = ref(''), coverageDisplay = ref<'strength' | 'field' | 'boundary'>('strength');
@@ -110,11 +128,19 @@ export function createGisSituation(services?: GisSituationServices) {
     const token = begin(), initial = frame.value;
     let basemap: TerrainBasemap | undefined;
     try {
-      basemap = await terrainLoader(initial.terrain, globalThis.fetch, import.meta.env.BASE_URL, token.controller.signal);
+      let terrain = initial.terrain;
+      if (plain) {
+        const context = await services?.resources?.loadResourceReadContext({ context: 'gis', signal: token.controller.signal });
+        if (!token.valid()) return;
+        if (context?.terrain?.sourceSha256 !== plainTerrain.sourceSha256) throw new Error('平原 DEM 版本不匹配。');
+        terrain = context.terrain;
+      }
+      basemap = await terrainLoader(terrain, globalThis.fetch, import.meta.env.BASE_URL, token.controller.signal);
       if (!token.valid()) { basemap.dispose(); return; }
-      replace({ ...initial, basemap });
+      replace({ ...initial, terrain, basemap });
     } catch (reason) {
-      if (token.valid()) error.value = `示例地形尚未显示：${reasonText(reason)}。示例点线已保留。`;
+      if (token.valid()) error.value = plain ? `平原地形加载失败。${reasonText(reason)}`
+        : `示例地形尚未显示：${reasonText(reason)}。示例点线已保留。`;
     } finally { if (token.valid()) busy.value = false; }
   }
   async function readPlan(row: PlanningPlanSummary, token: ReturnType<typeof begin>) {
@@ -252,6 +278,7 @@ export function createGisSituation(services?: GisSituationServices) {
     } finally { if (alive && owner === listSerial) listing.value = false; }
   }
   async function showExample() {
+    if (plain) return;
     pauseFollowing();
     const token = begin(), example = gisExampleFrame();
     let basemap: TerrainBasemap | undefined;
@@ -294,7 +321,7 @@ export function useGisSituation() {
     getCoverage: collaborationHttp.frozenCoverage.getLatestCache,
     resources: { loadResourceReadContext: input => previewService.loadResourceReadContext(input),
       queryResourceInterferences: input => previewService.queryResourceInterferences(input) },
-  } : undefined);
+  } : undefined, env.plainTerrain);
   onBeforeUnmount(model.stop);
   return model;
 }

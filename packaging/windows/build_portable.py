@@ -84,6 +84,41 @@ def copy_first_use_materials(target, materials=None):
     return copied
 
 
+def plain_workspace_files(workspace):
+    """仅将平原地形与构造例程的受控文件装入独立便携包。"""
+    workspace = Path(workspace).resolve()
+    maps = "app/front_design/radio-planning-20261022/dist/maps/"
+    geodata = ("dem/dem_current.json", "dem/dem_current.bin.gz",
+               "landcover/landcover_taihang.json", "landcover/landcover_taihang.bin.gz",
+               "landcover/landcover_legend.csv", "roads/roads_taihang.geojson.gz")
+    synthetic = ("nodes/nodes_v1.csv", "nodes/devices_v1.csv", "nodes/device_models_v1.csv",
+                 "nodes/antenna_models_v1.csv", "nodes/candidate_sites_v1.csv", "tasks/task_scenarios_v1.csv",
+                 "tasks/task_links_v1.csv", "tasks/plain_start_example.json", "frequency/frequency_resources_v1.csv",
+                 "interference/interference_sources_v1.csv", "topology/topology_links_v1.csv",
+                 "link_status/link_status_v1.csv")
+    overlays = [(f"geodata/raw/{name}", f"app/data/raw/{name}") for name in geodata]
+    overlays += [(f"geodata/maps/sr4-terrain.{suffix}", maps + f"sr4-terrain.{suffix}") for suffix in ("json", "png")]
+    overlays += [(f"examples/runtime-data/data/synthetic/{name}", f"app/data/synthetic/{name}") for name in synthetic]
+    examples = [f"{folder}/{name}" for folder in ("01_规划任务", "05_全量规划任务", "06_失效后重新规划任务")
+                for name in ("01_task_scenarios.csv", "02_task_links.csv", "00_适用资源.json")]
+    examples += ["06_失效后重新规划任务/03_模拟失效节点清单.json"]
+    examples += [f"02_设备状态/{name}" for name in ("00_状态数据说明.json", "设备状态_第1批_初始状态.json", "设备状态_第2批_状态变化.json")]
+    examples_folder = "平原场景例程导入数据"
+    materials = [(f"examples/{examples_folder}/{name}", f"{examples_folder}/{name}") for name in examples]
+
+    def resolve(files):
+        resolved = []
+        for source, destination in files:
+            path = workspace / source
+            if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(workspace):
+                raise RuntimeError("平原便携包文件缺失或越界：" + source)
+            resolved.append((path, destination))
+        return resolved
+
+    guide = TEMPLATES / "平原场景使用说明.txt"
+    return resolve(overlays), [*resolve(materials), (guide, f"{examples_folder}/{guide.name}")]
+
+
 def digest(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
@@ -173,7 +208,8 @@ def build(args):
         raise RuntimeError("Python 官方嵌入包 SHA256 不匹配")
     if target.is_relative_to(ROOT / "front_design"):
         raise RuntimeError("不能把输出放在前端源目录")
-    materials = first_use_materials()
+    plain_workspace = getattr(args, "plain_workspace", None)
+    overlays, materials = plain_workspace_files(plain_workspace) if plain_workspace else ([], first_use_materials())
     target.mkdir(parents=True)
     canonical_frontend = ROOT / "front_design/radio-planning-20261022"
     frontend = args.frontend_source.resolve() if args.frontend_source else canonical_frontend
@@ -189,14 +225,21 @@ def build(args):
     # 复用构建机 node_modules，不安装、不复制依赖；最终包只带静态产物。
     subprocess.run([str(args.node), str(frontend / "node_modules/vue-tsc/bin/vue-tsc.js"), "--noEmit"], cwd=frontend, check=True)
     static = target / "app/front_design/radio-planning-20261022/dist"
+    frontend_env = {**os.environ, "VITE_TERRAIN_SCENE": "plain" if plain_workspace else "hills"}
     subprocess.run([str(args.node), str(frontend / "node_modules/vite/bin/vite.js"), "build", "--mode", "integration",
-                    "--outDir", str(static)], cwd=frontend, check=True)
+                    "--outDir", str(static)], cwd=frontend, check=True, env=frontend_env)
     for name in source_files():
+        if plain_workspace and (name.startswith("data/results/") or name in (
+            "data/synthetic/topology/routes_v1.json", "data/synthetic/topology/frequency_conflicts_v1.csv",
+        )):
+            continue
         source, destination = ROOT / name, target / "app" / name
         if not source.is_file() or source.is_symlink():
             raise RuntimeError("源码清单包含缺失文件或符号链接：" + name)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
+    if overlays:
+        copy_first_use_materials(target, overlays)
     # 后端影响图按既有只读路径使用中文字体，不依赖目标电脑的字体安装情况。
     font_source = canonical_frontend / "public/fonts"
     shutil.copytree(font_source, target / "app/front_design/radio-planning-20261022/public/fonts")
@@ -214,6 +257,10 @@ def build(args):
                          ("停止系统.cmd", "停止系统.cmd"), ("使用说明.txt", "使用说明.txt")):
         shutil.copy2(TEMPLATES / source, target / name)
     example_files = copy_first_use_materials(target, materials)
+    example_entry = "首次使用演示.html"
+    if plain_workspace:
+        example_entry = "平原场景例程导入数据/平原场景使用说明.txt"
+        shutil.copy2(target / example_entry, target / "使用说明.txt")
     licenses = target / "licenses"
     licenses.mkdir()
     shutil.copy2(runtime / "LICENSE.txt", licenses / "Python-LICENSE.txt")
@@ -245,9 +292,11 @@ def build(args):
     manifest = {"schema": 1, "platform": "Windows 10/11 x64", "controlled_version": "LOCAL-20261103-" + controlled_hash[:12],
         "content_snapshot_sha256": controlled_hash, "python": {"version": "3.12.4", "sha256": EMBED_SHA256},
         "database": "FIRST_START_NEW_DATABASE_NO_DEVELOPER_HISTORY", "data_origin": "SYNTHETIC_INTEGRATION",
-        "first_use_examples": {"entry": "首次使用演示.html", "files": example_files,
+        "first_use_examples": {"entry": example_entry, "files": example_files,
                                "policy": "IMPORT_AND_COMPUTE_ON_FRESH_DATABASE"},
         "dependencies": dependencies, "files": files}
+    if plain_workspace:
+        manifest["terrain_scene"] = "plain"
     (target / "package-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     output_zip = target.with_suffix(".zip")
     with zipfile.ZipFile(output_zip, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
@@ -266,4 +315,5 @@ if __name__ == "__main__":
     parser.add_argument("--site-packages", type=Path, required=True)
     parser.add_argument("--node", type=Path, required=True)
     parser.add_argument("--frontend-source", type=Path, help="可选：与交付分支内容逐文件一致、已有依赖的前端目录")
+    parser.add_argument("--plain-workspace", type=Path, help="使用经核对的平原 DEM、构造资源及首次使用例程构建独立便携包")
     build(parser.parse_args())

@@ -7,6 +7,7 @@ export const env = {
   sampleData: import.meta.env.VITE_SAMPLE_DATA === 'true' ||
     (import.meta.env.VITE_SAMPLE_DATA !== 'false' && (import.meta.env.VITE_DATA_MODE ?? 'mock') === 'mock'),
   apiBaseUrl: import.meta.env.VITE_API_BASE_URL ?? '/api/v1',
+  plainTerrain: import.meta.env.VITE_TERRAIN_SCENE === 'plain',
 } as const;
 
 // 认证只允许同源 API；根相对路径可在隔离测试中校验，不猜测真实后端地址。

@@ -1,6 +1,6 @@
 <template>
   <section class="gis-situation" aria-label="GIS 态势只读地图">
-    <PlainTerrainMap v-if="terrainScene === 'plain'" />
+    <PlainTerrainMap v-if="!plainWorkspace && terrainScene === 'plain'" />
     <template v-else>
     <MapCanvas
       ref="map"
@@ -21,7 +21,7 @@
     <div class="source-badge" :class="{ example: frame.example }" aria-live="polite">
       <span class="source-dot" />
       <strong>{{ frame.label }}</strong>
-      <span>{{ frame.example ? '受控构造示例 · 非实测' : frame.version + ' · 算法预测' }}</span>
+      <span>{{ frame.example ? '受控构造示例 · 非实测' : frame.version + (frame.key === 'plain-terrain' ? '' : ' · 算法预测') }}</span>
     </div>
     <p v-if="model.displayingLiveInterferences" class="interference-source-badge">干扰源已更新；规划链路仍为原计算结果</p>
     <p v-if="model.error" class="map-notice error" role="alert">{{ model.error }}</p>
@@ -48,7 +48,7 @@
         <p class="source-note">{{ frame.notice }}</p>
         <p class="source-note">{{ model.interferenceSourceLabel }}</p>
         <details class="source-note"><summary>来源详情</summary><p>{{ model.interferenceSourceDetails }}</p></details>
-        <button class="btn small" :disabled="model.busy" @click="model.showExample">查看内置受控示例</button>
+        <button v-if="!plainWorkspace" class="btn small" :disabled="model.busy" @click="model.showExample">查看内置受控示例</button>
         <div class="layer-options">
           <label><input v-model="model.showLinks" type="checkbox" />规划链路</label>
           <label><input v-model="model.showCoverage" type="checkbox" :disabled="!coverageDevices.length" />设备覆盖</label>
@@ -73,7 +73,7 @@
           <button v-for="plan in model.catalog?.items ?? []" :key="plan.id" class="plan-option" :disabled="model.busy" @click="model.openPlan(plan)">
             <strong>{{ plan.name }} · {{ plan.version }}</strong><span>{{ stateLabels[plan.state] }} · {{ plan.savedAt }}</span>
           </button>
-          <p v-if="model.catalog?.total === 0">暂无已保存方案，内置示例仍可查看。</p>
+          <p v-if="model.catalog?.total === 0">{{ plainWorkspace ? '暂无已保存方案。' : '暂无已保存方案，内置示例仍可查看。' }}</p>
           <div v-if="model.catalog" class="control-actions">
             <button class="btn small" :disabled="model.listing || model.catalog.pageNum <= 1" @click="model.queryPlans(model.catalog.pageNum - 1)">上一页</button>
             <span>第 {{ model.catalog.pageNum }} 页</span>
@@ -83,7 +83,8 @@
       </section>
     </Teleport>
     </template>
-    <label class="terrain-scene-control">
+    <span v-if="plainWorkspace" class="terrain-scene-control">地形场景　平原</span>
+    <label v-else class="terrain-scene-control">
       地形场景
       <select v-model="terrainScene">
         <option value="hills">丘陵</option>
@@ -99,6 +100,7 @@ import MapCanvas from '../components/MapCanvas.vue';
 import PlainTerrainMap from '../components/PlainTerrainMap.vue';
 import SituationCoverageLegend from '../components/SituationCoverageLegend.vue';
 import { gisExampleMetadata, useGisSituation } from '../composables/useGisSituation';
+import { env } from '../config/env';
 const menuTarget = inject<Ref<HTMLElement | null>>('applicationMenuTarget', ref(null));
 const embeddedModule = inject('embeddedModule', false);
 const embeddedControlsTarget = ref<HTMLElement | null>(null);
@@ -106,6 +108,7 @@ const controlsTarget = computed(() => embeddedModule ? embeddedControlsTarget.va
 const model = reactive(useGisSituation());
 const map = ref<InstanceType<typeof MapCanvas>>();
 const terrainScene = ref<'hills' | 'plain'>('hills');
+const plainWorkspace = env.plainTerrain;
 const frame = computed(() => model.frame);
 const hoverContext = computed(() => ({ key: frame.value.key + ':' + (model.displayingLiveInterferences ? model.liveInterferences?.revision : 'frozen'),
   source: '节点/设备：' + (frame.value.example ? '受控构造示例 · 冻结规划参数 · 非实测' : '已保存冻结规划参数 · 非实测') + '；' + model.interferenceSourceLabel,
