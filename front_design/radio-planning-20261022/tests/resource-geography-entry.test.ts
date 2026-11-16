@@ -94,7 +94,7 @@ describe('M5 actual GIS editor and drawer, explicit HTTP service context', () =>
     const editor = setup(); await editor.openForm('device', editor.resources.devices[0].id);
     const root = mount(); await nextTick();
     expect(all(root, item => item.props.id === 'resource-currentWorkMode')).toHaveLength(0);
-    expect(textOf(root)).toContain('工作模式协议待确认');
+    expect(textOf(root)).toContain('当前工作模式仅供查看');
   });
   it('Mock retains the teaching mode dropdown without touching P06 ports', async () => {
     runtime.mode = 'mock';
@@ -137,7 +137,7 @@ describe('M5 map pick preserves raw DEM edge coordinates before validation', () 
     if (creating) {
       await editor.newForm(kind);
       Object.assign(editor.form!.fields, kind === 'station' ? { name: 'Exact edge station' }
-        : { name: 'Exact edge interference', antennaHeightM: '0', centerFreqKhz: '1500', bandwidthKhz: '10', txPowerDbm: '-10' });
+        : { name: 'Exact edge interference', antennaHeightM: '0', centerFreqKhz: '1500', bandwidthKhz: '10', txPowerDbm: '-10', antennaGainDbi: '0' });
     } else await editor.openForm(kind, firstId(editor, kind));
     const id = editor.form!.id;
     select(editor, entry, coordinate);

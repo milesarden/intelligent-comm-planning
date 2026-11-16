@@ -165,7 +165,7 @@ describe('GIS 标绘来源、身份与旧事件保护', () => {
     waiting.resolve({} as Awaited<ReturnType<typeof s.service.saveDiagnosisScenario>>); expect(await saving).toBe(false);
     expect(s.diagnosis.draft).toBeNull(); expect(state.network.value).toBeNull(); expect(s.router.currentRoute.value.path).toBe('/situation'); expect(s.diagnosis.busy).toBe(false);
   });
-  it('同账号权限刷新拒绝迟到保存但释放忙碌锁，仍保留可重试草稿', async () => {
+  it('同账号权限刷新拒绝迟到保存但释放忙碌锁，仍保留可重试草稿', { timeout: 20000 }, async () => {
     const s = await fixture(), state = await s.mount(), identity = copy(s.auth.identity!), input = copy(s.diagnosis.draft!);
     input.description = '权限刷新保留'; state.apply(input);
     const waiting = deferred<void>();

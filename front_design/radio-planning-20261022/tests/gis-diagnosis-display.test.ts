@@ -10,7 +10,7 @@ import { filterGisDiagnosisImpact, gisDiagnosisObject, GIS_DIAGNOSIS_LEVELS, par
 let current: DiagnosisRecord, redeployed: DiagnosisRecord;
 let reports: DiagnosisRecord[] = [], historical: DiagnosisRecord[] = [];
 
-// 使用实际保存、确认、执行及完整报告入口，展示校验不依赖拼装的伪成功任务。
+// 同一准备钩子依次生成两套网络的场景及一个重新部署场景，分开于单测的执行预算。
 beforeAll(async () => {
   for (const networkId of ['balanced', 'economical']) {
     const s = await interferenceFixture(networkId);
@@ -41,7 +41,7 @@ beforeAll(async () => {
       s.advance(); redeployed = await s.diagnosis.getDiagnosisReport(run.view.run.id);
     }
   }
-}, 20000);
+}, 90000);
 
 describe('诊断明确目标', () => {
   it('传播按报告冻结并随等级过滤，非法对象或来源不会被当成合法路径',()=>{

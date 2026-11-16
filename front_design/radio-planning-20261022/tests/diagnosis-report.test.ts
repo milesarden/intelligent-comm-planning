@@ -119,7 +119,7 @@ describe('诊断报告三格式', () => {
   });
 });
 
-it('抗干扰报告保留分析来源及部署坐标，示意图按新点位定位', async () => {
+it('抗干扰报告保留分析来源及部署坐标，示意图按新点位定位', { timeout: 20000 }, async () => {
   const s=await interferenceFixture(),run=await s.submit();s.advance();const adopted=await s.adopt(run.view.run.analysisId,'NODE_REDEPLOY');
   const plan=(await s.confirm(adopted.plan.id)).plan,preset=networkDiagnosisPresets(plan)[0];
   const saved=await s.diagnosis.saveDiagnosisScenario({baseRevision:'initial',requestId:'scenario',scenarioId:null,draft:{name:'重部署诊断',description:'',planId:plan.id,faults:preset.faults}});

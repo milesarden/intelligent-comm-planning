@@ -4,6 +4,7 @@ import { defineComponent, h, nextTick, ssrContextKey, type App } from 'vue';
 import { authorizeStore } from './helpers/auth';
 import { clientTemplate, find, node, renderer, textOf } from './helpers/vue-client';
 import { useInterferenceStore } from '../src/stores/interference';
+import { downloadFile } from '../src/services/file-download';
 import Panel from '../src/components/InterferenceAnalysisPanel.vue';
 import SceneDrawer from '../src/components/InterferenceSceneDrawer.vue';
 import MeasureDrawer from '../src/components/InterferenceMeasureDrawer.vue';
@@ -12,6 +13,7 @@ import ReadableData from '../src/components/ReadableData.vue';
 import type { RunDetail, AdoptionDetail } from '../src/types/interference-workbench';
 
 vi.mock('../src/components/AppDrawer.vue', () => ({ default: defineComponent({ props: ['visible'], setup: (props, { slots }) => () => props.visible ? h('aside', [slots.default?.(), slots.footer?.()]) : null }) }));
+vi.mock('../src/services/file-download', () => ({ downloadFile: vi.fn() }));
 let pinia: ReturnType<typeof createPinia>, app: App | undefined;
 beforeAll(async () => { for (const [component, name] of [[Panel, 'InterferenceAnalysisPanel'], [SceneDrawer, 'InterferenceSceneDrawer'], [MeasureDrawer, 'InterferenceMeasureDrawer'], [HistoryDrawer, 'InterferenceHistoryDrawer'], [ReadableData, 'ReadableData']] as const) await clientTemplate(component, 'src/components/' + name + '.vue', 'interference-r2-render.ts'); });
 class FixtureDocument { activeElement = null; }
@@ -63,6 +65,35 @@ describe('专用干扰组件，不替代GIS宿主页验收', () => {
     const raw = textOf(find(explanation, row => row.tag === 'details')!);
     expect(raw).toContain('parameter_substitutions'); expect(raw).toContain('SpecFiller');
     expect(JSON.stringify(store.selected!.result!.notes)).toBe(original);
+  });
+  it('导出选中冻结运行的受扰结果和措施，处理中不提供导出', async () => {
+    const download = vi.mocked(downloadFile);
+    download.mockClear();
+    const store = useInterferenceStore();
+    const view = successful();
+    view.source_state = { state: 'HISTORICAL', reasons: ['资源已更新'] };
+    view.source.interferenceSources = [{ interferenceId: 'IF-FROZEN', sourceRow: { interference_id: 'IF-FROZEN' } }];
+    sourceContext([{ interference_id: 'IF-LIVE' }]);
+    store.selected = view;
+    const root = mount(Panel, { sourceEditable: false, selectedNodeId: '', selectedLinkId: '' });
+    const exportButton = () => find(root, row => row.tag === 'button' && textOf(row) === '导出分析结果与措施');
+    const click = exportButton()!.props.onClick as () => void;
+    click();
+    expect(download).toHaveBeenCalledOnce();
+    const file = download.mock.calls[0]![0];
+    expect(file.name).toBe('干扰分析-RUN1.json');
+    expect(file.mime).toBe('application/json');
+    const archive = JSON.parse(new TextDecoder().decode(file.bytes));
+    expect(archive).toMatchObject({
+      result_type: '模型预测', plan_id: 'P1', scene_version_id: 'SV1', resource_revision: 'RES1',
+      result: view.result, interference_sources: view.source.interferenceSources,
+    });
+    expect(archive).not.toHaveProperty('planSnapshot');
+    store.selected = { ...view, state: 'RUNNING', result: null };
+    await nextTick();
+    expect(exportButton()).toBeUndefined();
+    click();
+    expect(download).toHaveBeenCalledOnce();
   });
   it('预览只有未知全网指标时不显示打开方案或假百分比', () => {
     const store = useInterferenceStore(); store.selected = successful(); store.measureId = 'CM1'; store.measureOpen = true;

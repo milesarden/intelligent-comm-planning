@@ -3,8 +3,8 @@ import { createHttpClient, httpService } from '../src/services/http';
 import { ApiError } from '../src/services/types';
 import { planningPresets } from '../src/mocks/planning-presets';
 
-// 三个认证方法由独立契约测试覆盖；管理与演示辅助仍明确拒绝，不能回退 Mock。
-it.each(['getLoginCatalog','loadSystemCatalog','querySystemAccounts','saveSystemAccount','setSystemAccountState','querySystemRoles','saveSystemRole','querySystemParameters','saveSystemParameter','queryOperationLogs','resetSystemWorkspace','recoverSystemWorkspace','resetOperationLogs'])('HTTP 系统方法 %s 明确未实现',async name=>{await expect((httpService as unknown as Record<string,()=>Promise<unknown>>)[name]()).rejects.toMatchObject({code:'NOT_IMPLEMENTED'});});
+// 已接入的账号、角色、参数及日志由 system-http.test.ts 核验生产协议。
+it.each(['getLoginCatalog','loadSystemCatalog','resetSystemWorkspace','recoverSystemWorkspace','resetOperationLogs'])('HTTP 旧系统辅助入口 %s 明确未实现',async name=>{await expect((httpService as unknown as Record<string,()=>Promise<unknown>>)[name]()).rejects.toMatchObject({code:'NOT_IMPLEMENTED'});});
 
 describe('HTTP 客户端保留失败语义', () => {
   it('已接入知识方法保留网络失败，不回退 Mock；重置仍拒绝', async () => {
@@ -151,25 +151,31 @@ describe('HTTP 客户端保留失败语义', () => {
     );
     await expect(malformed('/plans')).rejects.toMatchObject({ code: 'INVALID_ENVELOPE' });
   });
-  it('未接入的 HTTP 业务适配明确拒绝，不回退 Mock', async () => {
+  it('旧 HTTP 入口明确拒绝，已接入的资源提交校验版本及请求字段', async () => {
     await expect(httpService.loadPreview()).rejects.toBeInstanceOf(ApiError);
     await expect(httpService.loadPreview()).rejects.toMatchObject({ code: 'NOT_IMPLEMENTED' });
     await expect(
       httpService.commitResources({ baseRevision: 'initial', stations: [], devices: [] }),
-    ).rejects.toMatchObject({ code: 'NOT_IMPLEMENTED' });
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
     await expect(httpService.resetResources(null)).rejects.toMatchObject({
       code: 'NOT_IMPLEMENTED',
     });
   });
 });
 
-describe('第七批 HTTP 未接入边界',()=>{
-  it('剩余八个入口明确未实现；已接导出拒绝缺参数，不回退 Mock',async()=>{
-    const fetcher=vi.spyOn(globalThis,'fetch');
-    const names=['getResourceTemplate','previewResourceImport','commitResourceImport','setDeviceAvailability','loadSpectrumWorkspace','saveSpectrumSource','checkSpectrumSource','resetSpectrumWorkspace'];
-    for(const name of names)await expect((httpService as unknown as Record<string,()=>Promise<unknown>>)[name]()).rejects.toMatchObject({code:'NOT_IMPLEMENTED'});
-    await expect((httpService.exportResources as unknown as ()=>Promise<unknown>)()).rejects.toMatchObject({code:'VALIDATION_ERROR'});
-    expect(fetcher).not.toHaveBeenCalled();fetcher.mockRestore();
+describe('资源导入格式与旧频谱入口边界',()=>{
+  it('旧入口明确拒绝，导入导出拒绝缺参数，二者都不发请求',async()=>{
+    const fetcher=vi.spyOn(globalThis,'fetch').mockRejectedValue(new Error('未预期的请求'));
+    try {
+      const methods = httpService as unknown as Record<string,()=>Promise<unknown>>;
+      for(const name of ['setDeviceAvailability','loadSpectrumWorkspace','saveSpectrumSource','checkSpectrumSource','resetSpectrumWorkspace']) {
+        await expect(methods[name]()).rejects.toMatchObject({ code:'NOT_IMPLEMENTED' });
+      }
+      for(const name of ['getResourceTemplate','previewResourceImport','commitResourceImport','exportResources']) {
+        await expect(methods[name]()).rejects.toMatchObject({ code:'VALIDATION_ERROR' });
+      }
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally { fetcher.mockRestore(); }
   });
 });
 

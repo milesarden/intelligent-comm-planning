@@ -149,6 +149,41 @@ describe('覆盖选择独立离开保护',()=>{
     const f=await fixture(),receipt=saved(f);f.client.saveBandwidthSelection.mockResolvedValueOnce(receipt);f.client.getBandwidthOptions.mockRejectedValueOnce(new Error('回读失败'));await choose(f.root);await submit(f.root);const original=f.client.saveBandwidthSelection.mock.calls[0]![2];app!.unmount();app=undefined;useAuthStore().generation++;
     const next=await fixture();expect(textOf(next.root)).toContain(original);expect(next.client.getBandwidthOptions).not.toHaveBeenCalled();next.client.saveBandwidthSelection.mockResolvedValue(receipt);next.client.getBandwidthOptions.mockResolvedValue({...next.data.options,current_selection:receipt});await click(next.root,'核实带宽选择原请求');expect(next.client.saveBandwidthSelection.mock.calls[0]![2]).toBe(original);expect(entries.size).toBe(0);expect(useAuthStore().hasUnsaved()).toBe(false);
   });
+  it.each(['snapshotId', 'engineVersion'] as const)('重挂拒绝存储请求的 %s 不匹配', async field => {
+    const first = await fixture();
+    first.client.saveBandwidthSelection.mockRejectedValueOnce(new Error('网络中断'));
+    await choose(first.root);
+    await submit(first.root);
+    const [key, raw] = [...entries][0]!;
+    const request = JSON.parse(raw);
+    request.query[field] = field === 'engineVersion' ? 'V01-5' : 'another-snapshot';
+    entries.set(key, JSON.stringify(request));
+    app!.unmount();
+    app = undefined;
+    useAuthStore().generation++;
+
+    const next = await fixture();
+    expect(textOf(next.root)).toContain('保留的带宽请求来源无效，未重放');
+    expect(textOf(next.root)).not.toContain(request.requestId);
+    expect(next.client.saveBandwidthSelection).not.toHaveBeenCalled();
+  });
+  it('另一账号重挂时不显示或核实原账号的带宽请求', async () => {
+    const first = await fixture();
+    first.client.saveBandwidthSelection.mockRejectedValueOnce(new Error('网络中断'));
+    await choose(first.root);
+    await submit(first.root);
+    const original = first.client.saveBandwidthSelection.mock.calls[0]![2];
+    app!.unmount();
+    app = undefined;
+    const auth = useAuthStore();
+    auth.accept({ ...auth.identity!, id: 'another-account', sessionId: crypto.randomUUID() });
+
+    const next = await fixture();
+    expect(textOf(next.root)).not.toContain(original);
+    expect(textOf(next.root)).not.toContain('核实带宽选择原请求');
+    expect(next.client.saveBandwidthSelection).not.toHaveBeenCalled();
+    expect(entries.size).toBe(1);
+  });
   it('页面步骤入口调用独立确认且不再按步骤卸载面板；监听卸载后清理',async()=>{
     const source=readFileSync(new URL('../src/views/PlanningApiView.vue',import.meta.url),'utf8');expect(source).toContain('@click="changePlanningStep(i + 1)"');expect(source).toContain('await coveragePanel.value.requestLeave()');expect(source).toContain('FrozenCoveragePanel v-if="lastCoverageQuery"');expect(source).toContain('coveragePanel?.hasProtectedSelection()');expect(source).not.toContain('FrozenCoveragePanel v-if="planning.step !== 1');
     const f=await fixture();await choose(f.root);app!.unmount();app=undefined;expect(listeners.has('beforeunload')).toBe(false);expect(useAuthStore().hasUnsaved()).toBe(false);

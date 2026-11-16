@@ -12,9 +12,9 @@ vi.mock('echarts/charts',()=>({GraphChart:{},BarChart:{},LineChart:{},PieChart:{
 vi.mock('echarts/components',()=>({TooltipComponent:{},GridComponent:{},LegendComponent:{},MarkAreaComponent:{}}));
 vi.mock('echarts/renderers',()=>({CanvasRenderer:{}}));
 vi.mock('ol/Map',()=>({default:class{
-  view:any;updateSize=vi.fn();
+  view:any;updateSize=vi.fn();viewport=new EventTarget();
   constructor(options:any){this.view=options.view;vi.spyOn(this.view,'fit').mockImplementation(()=>{});probes.maps.push(this);}
-  getView(){return this.view;}getSize(){return[960,640];}setLayers(){}on(){}dispose(){}forEachFeatureAtPixel(){}
+  getView(){return this.view;}getViewport(){return this.viewport;}getSize(){return[960,640];}setLayers(){}on(){}dispose(){}forEachFeatureAtPixel(){}
 }}));
 vi.mock('ol/control',()=>({defaults:()=>({extend:()=>[]}),ScaleLine:class{}}));
 await clientTemplate(ChartCanvas,'src/components/ChartCanvas.vue','stable-chart.ts');

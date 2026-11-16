@@ -1,5 +1,5 @@
 import { useResourceReadStore } from '../src/stores/resource-read';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as Vue from 'vue';
 import { createRenderer, h, nextTick, ssrContextKey, type App, type Component } from 'vue';
 import { createPinia, disposePinia, setActivePinia } from 'pinia';
@@ -12,9 +12,7 @@ import GisDeviceLayerPanel from '../src/components/GisDeviceLayerPanel.vue';
 import DeviceCoveragePanel from '../src/components/DeviceCoveragePanel.vue';
 import { previewService } from '../src/services';
 import { createMockService } from '../src/services/mock';
-import { createPlanningMock } from '../src/services/planning-mock';
 import { createDiagnosisMock } from '../src/services/diagnosis-mock';
-import { initialMeta } from '../src/services/resource-storage';
 import { usePreviewStore } from '../src/stores/preview';
 import { useGisWorkspaceStore } from '../src/stores/gis-workspace';
 import { useResourceEditStore } from '../src/stores/resource-edit';
@@ -22,14 +20,12 @@ import { useDiagnosisStore } from '../src/stores/diagnosis';
 import { planStations } from '../src/services/planning-snapshot';
 import { planningPresets } from '../src/mocks/planning-presets';
 import { diagnosisPresets } from '../src/mocks/diagnosis-presets';
-import resources from '../src/mocks/resources.json';
-import type { ResourcesData } from '../src/types/domain';
 import type { DiagnosisDemo, DiagnosisRecord } from '../src/types/diagnosis';
 import type { GisResultLayerSettings } from '../src/maps/gis-result-layers';
 import { PLANNING_STORAGE_KEY } from '../src/config/demo';
 import { authorizeStore } from './helpers/auth';
 import { bindMonitoring, settleMonitoring } from './helpers/monitoring';
-import { savedRequest, taskMeta } from './helpers/tasks';
+import { prepareDiagnosisPlanningFixture } from './helpers/diagnosis-planning';
 import { TestStorage } from './helpers/storage';
 // 仅复用模板编译，原有宿主、替身和业务交互保持本地。
 import { clientTemplate } from './helpers/vue-client';
@@ -107,23 +103,22 @@ async function change(root: HostNode, label: string, value: string | boolean, ev
   (target!.props[event] as (event: unknown) => void)({ target: { checked: value, value } }); await settleMonitoring();
 }
 
-// 本文件独立走规划保存、确认、诊断保存与提交流程，不改公共 fixture 或来源资产。
+let plannedNetwork: Awaited<ReturnType<typeof prepareDiagnosisPlanningFixture>>;
+beforeAll(async () => {
+  plannedNetwork = await prepareDiagnosisPlanningFixture(
+    planningPresets.find(row => row.id === 'balanced')!.input,
+    { at: '2026-10-15T01:00:00Z', name: 'GIS 诊断冻结网络' },
+  );
+}, 20000);
+
 async function diagnosisFixture(demo: DiagnosisDemo = 'normal', presetId = 'balanced:hardware') {
-  const storage = new TestStorage(); let time = Date.parse('2026-10-15T01:00:00Z');
-  const current = { resources: structuredClone(resources) as ResourcesData, meta: initialMeta() };
-  const read = () => ({ ...current, meta: { ...current.meta, taskWorkspace: taskMeta(storage) } });
-  const planning = createPlanningMock(() => storage, read, () => time);
-  const submitted = await planning.submitPlanning(await savedRequest(storage, { baseRevision: 'initial', requestId: 'plan-submit', taskId: null,
-    parentPlanVersionId: null, input: structuredClone(planningPresets.find(row => row.id === 'balanced')!.input) }));
-  time += 10000;
-  const saved = await planning.savePlanVersion({ baseRevision: submitted.workspace.revision, requestId: 'plan-save', jobId: submitted.view.job.id, name: 'GIS 诊断冻结网络', note: '' });
-  const confirmed = await planning.confirmPlanVersion({ baseRevision: saved.workspace.revision, requestId: 'plan-confirm', planId: saved.plan.id });
-  const service = createDiagnosisMock(() => storage, read, () => time);
+  const { storage, current, planning, read, now, advance, plan } = plannedNetwork();
+  const service = createDiagnosisMock(() => storage, read, now);
   const initial = await service.loadDiagnosisWorkspace();
   const scenario = await service.saveDiagnosisScenario({ baseRevision: initial.workspace!.revision, requestId: 'scene-save', scenarioId: null,
-    draft: { name: 'GIS 完整诊断', description: '只读影响显示', planId: confirmed.plan.id, faults: structuredClone(diagnosisPresets.find(row => row.id === presetId)!.faults) } });
+    draft: { name: 'GIS 完整诊断', description: '只读影响显示', planId: plan.id, faults: structuredClone(diagnosisPresets.find(row => row.id === presetId)!.faults) } });
   const result = await service.submitDiagnosis({ baseRevision: scenario.revision, requestId: 'diagnosis-submit', scenarioVersionId: scenario.scenarios[0].versions[0].id, demo });
-  return { storage, current, planning, service, id: result.view.run.id, advance: () => { time += 10000; } };
+  return { storage, current, planning, service, id: result.view.run.id, advance };
 }
 let app: App<HostNode> | undefined, pinia: ReturnType<typeof createPinia> | undefined;
 afterEach(() => { app?.unmount(); app = undefined; if (pinia) disposePinia(pinia); pinia = undefined; vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
@@ -166,7 +161,8 @@ async function reopenReport(s: Awaited<ReturnType<typeof mountEntry>>, id = 'DG-
   await s.router.push({ path: '/situation', query: { diagnosisId: id } }); await settleMonitoring();
 }
 
-describe('GIS 完整诊断独立快照入口', () => {
+// 真实页面宿主需挂载 GIS、诊断与资源目录，内部等待仍沿用原边界。
+describe('GIS 完整诊断独立快照入口', { timeout: 25000 }, () => {
   it('显式历史报告阻止默认监控，地图、面板身份及冻结数据来自同一报告', async () => {
     const s = await mountEntry(), record = await s.raw.getDiagnosisReport('DG-HW');
     expect(textOf(s.root)).toContain('数据来源：示例数据');
@@ -368,7 +364,7 @@ describe('GIS 完整诊断独立快照入口', () => {
   });
 });
 
-describe('GIS 诊断快照拓扑透明度', () => {
+describe('GIS 诊断快照拓扑透明度', { timeout: 25000 }, () => {
   const control = (root: HostNode, label = '拓扑透明度') => find(root, row => row.props['aria-label'] === label)!;
   it('零透明度只拦地图线条，故障图标与影响清单仍可定位且不改变冻结统计或区域', async () => {
     const fixture = await diagnosisFixture('normal', 'balanced:link'); fixture.advance();

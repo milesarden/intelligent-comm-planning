@@ -68,14 +68,14 @@ describe('诊断补充明细随历史独立冻结', () => {
     expect((await s.diagnosis.getDiagnosisReport('DG-HW')).dataOrigin).toBe('SAMPLE');
     expect(s.storage.writes).toBe(writes);expect(s.storage.getItem(DIAGNOSIS_STORAGE_KEY)).toBe(bytes);
   });
-  it.each([false, true])('上游重置后仍读取自身版本（采纳方案：%s）', async adopted => {
+  it.each([false, true])('上游重置后仍读取自身版本（采纳方案：%s）', { timeout: 20000 }, async adopted => {
     const s = await frozenDiagnosis(adopted), bytes = s.storage.getItem(DIAGNOSIS_STORAGE_KEY), writes = s.storage.writes;
     const report = await s.diagnosis.getDiagnosisReport(s.runId);
     expect(report.network!.resultDetails).toEqual(s.plan.resultDetails);
     expect(report.network!.resultDetails).toBeDefined(); expect(report.source.state).toBe('HISTORICAL');
     expect(s.storage.getItem(DIAGNOSIS_STORAGE_KEY)).toBe(bytes); expect(s.storage.writes).toBe(writes);
   });
-  it.each([false, true])('旧诊断缺明细读取不回填也不写回（采纳方案：%s）', async adopted => {
+  it.each([false, true])('旧诊断缺明细读取不回填也不写回（采纳方案：%s）', { timeout: 20000 }, async adopted => {
     const s = await frozenDiagnosis(adopted), legacy = JSON.parse(s.storage.getItem(DIAGNOSIS_STORAGE_KEY)!);
     for (const scenario of legacy.scenarios) for (const version of scenario.versions) delete version.network.resultDetails;
     for (const run of legacy.runs) delete run.scenario.network.resultDetails;

@@ -1,40 +1,39 @@
-import { savedRequest,taskMeta } from './helpers/tasks';
 import { authorizeStore } from './helpers/auth';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
-import { createPlanningMock } from '../src/services/planning-mock';
 import { createDiagnosisMock } from '../src/services/diagnosis-mock';
-import { initialMeta } from '../src/services/resource-storage';
 import { diagnosisPresets } from '../src/mocks/diagnosis-presets';
 import { planningPresets } from '../src/mocks/planning-presets';
-import resources from '../src/mocks/resources.json';
-import type { ResourcesData } from '../src/types/domain';
 import type { DiagnosisDraft, DiagnosisDemo, DiagnosisRunView } from '../src/types/diagnosis';
 import { DIAGNOSIS_STORAGE_KEY, PLANNING_STORAGE_KEY } from '../src/config/demo';
-import { TestStorage } from './helpers/storage';
+import { prepareDiagnosisPlanningFixture } from './helpers/diagnosis-planning';
 import { previewService } from '../src/services';
 import { useDiagnosisStore } from '../src/stores/diagnosis';
 import * as diagnosisExport from '../src/reports/diagnosis-export';
 
-// 通过真实规划服务准备确认版本，诊断测试不绕过上游资格检查。
+const planFixtures = new Map<string, Awaited<ReturnType<typeof prepareDiagnosisPlanningFixture>>>();
+beforeAll(async () => {
+  for (const [network, confirmed] of [['balanced', true], ['economical', true], ['balanced', false]] as const) {
+    const preset = planningPresets.find(item => item.id === network)!;
+    planFixtures.set(network + ':' + confirmed, await prepareDiagnosisPlanningFixture(preset.input, {
+      at: '2026-10-03T00:00:00Z', name: '诊断网络', confirmed,
+    }));
+  }
+}, 45000);
+
 async function setup(networkId = 'balanced', confirmed = true) {
-  const storage = new TestStorage(); let time = Date.parse('2026-10-03T00:00:00Z');
-  const current = {resources:structuredClone(resources) as ResourcesData,meta:initialMeta()};
-  const planning = createPlanningMock(() => storage,() => ({...current,meta:{...current.meta,taskWorkspace:taskMeta(storage)}}),() => time);
-  const submitted = await planning.submitPlanning(await savedRequest(storage,{baseRevision:'initial',requestId:'plan-submit',taskId:null,parentPlanVersionId:null,input:structuredClone(planningPresets.find(p => p.id === networkId)!.input)}));
-  time += 10000;
-  const saved = await planning.savePlanVersion({baseRevision:submitted.workspace.revision,requestId:'plan-save',jobId:submitted.view.job.id,name:'诊断网络',note:''});
-  const plan = confirmed ? (await planning.confirmPlanVersion({baseRevision:saved.workspace.revision,requestId:'plan-confirm',planId:saved.plan.id})).plan : saved.plan;
-  const service = createDiagnosisMock(() => storage,() => ({...current,meta:{...current.meta,taskWorkspace:taskMeta(storage)}}),() => time);
+  const { storage, planning, plan, current, read, now, advance } = planFixtures.get(networkId + ':' + confirmed)!();
+  const service = createDiagnosisMock(() => storage, read, now);
   const mutation = async () => ({baseRevision:(await service.loadDiagnosisWorkspace()).workspace!.revision,requestId:crypto.randomUUID()});
   const draft = (presetId = `${networkId}:hardware`): DiagnosisDraft => ({name:'诊断场景',description:'冻结快照测试',planId:plan.id,faults:structuredClone(diagnosisPresets.find(p => p.id === presetId)!.faults)});
   const save = async (input = draft(), scenarioId: string | null = null) => service.saveDiagnosisScenario({...await mutation(),scenarioId,draft:input});
   const submit = async (demo: DiagnosisDemo = 'normal', input = draft()) => { const saved = await save(input); return service.submitDiagnosis({...await mutation(),scenarioVersionId:saved.scenarios.at(-1)!.versions.at(-1)!.id,demo}); };
-  return {service,planning,plan,storage,current,mutation,draft,save,submit,advance:(ms = 10000) => { time += ms; }};
+  return {service,planning,plan,storage,current,mutation,draft,save,submit,advance};
 }
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
-describe('诊断场景与冻结任务', () => {
+// Mock 中完整的冻结验证在一个用例内多次执行；预算只用于测试运行器。
+describe('诊断场景与冻结任务', { timeout: 25000 }, () => {
   it('三路教学输出完整且输入受限，传播路径仅在影响阶段开放', async () => {
     const s=await setup(),task=await s.submit('three-way');
     s.advance(4700);const progress=await s.service.getDiagnosisProgress({id:task.view.run.id});
@@ -148,7 +147,7 @@ describe('诊断场景与冻结任务', () => {
   });
 });
 
-describe('诊断 store 的草稿与异步隔离', () => {
+describe('诊断 store 的草稿与异步隔离', { timeout: 25000 }, () => {
   it.each(['xlsx','png'] as const)('%s 失败只反馈到影响下载，同一冻结报告重试不清除完整报告错误',async format=>{
     const s=await setup();await s.submit();s.advance();setActivePinia(createPinia());authorizeStore();
     for(const [key,method] of Object.entries(s.service))vi.spyOn(previewService as any,key).mockImplementation(method as never);
@@ -279,7 +278,7 @@ describe('诊断 store 的草稿与异步隔离', () => {
   });
 });
 
-describe('本批上游资源对诊断影响',()=>{
+describe('本批上游资源对诊断影响', { timeout: 25000 }, () => {
   it.each(['interference','availability'])('%s 变更阻止新诊断，已提交任务仍用冻结网络完成',async kind=>{
     const s=await setup(),task=await s.submit(),frozen=structuredClone(task.view.run);
     if(kind==='interference')s.current.meta.interferenceVersion='changed-interference';

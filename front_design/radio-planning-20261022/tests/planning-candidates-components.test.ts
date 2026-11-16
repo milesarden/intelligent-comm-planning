@@ -22,10 +22,12 @@ interface MapEvent { pixel: number[]; coordinate: number[]; originalEvent?: obje
 interface Probe { view: View; layers: BaseLayer[]; picked?: Feature; handlers: Map<string, (e:MapEvent)=>void>; setLayers: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }
 const probes=vi.hoisted(()=>({maps:[] as Probe[]}));
 vi.mock('ol/Map',()=>({default:class implements Probe {
+  private readonly viewport = new EventTarget();
   view:View; layers:BaseLayer[]=[]; picked?:Feature; handlers=new Map<string,(e:MapEvent)=>void>();
   setLayers=vi.fn((layers:BaseLayer[])=>{this.layers=layers;});dispose=vi.fn();
   constructor(options:{view:View}) {this.view=options.view;vi.spyOn(this.view,'fit').mockImplementation(()=>{});vi.spyOn(this.view,'animate').mockImplementation(()=>{});probes.maps.push(this);}
   getView(){return this.view;} getSize(){return[960,640];} updateSize(){}
+  getViewport() { return this.viewport; }
   on(type:string,fn:(e:MapEvent)=>void){this.handlers.set(type,fn);}
   forEachFeatureAtPixel(_pixel:number[],fn:(f:Feature)=>unknown){if(this.picked)return fn(this.picked);}
 }}));

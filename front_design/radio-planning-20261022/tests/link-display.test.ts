@@ -9,6 +9,7 @@ import { monitoringPresets } from '../src/mocks/monitoring-presets';
 import type { NetworkLink } from '../src/types/domain';
 import { TestStorage } from './helpers/storage';
 import { monitoringFixture } from './helpers/monitoring';
+import { LINK_STATUS_STYLES } from '../src/config/link-status';
 
 const base = planningPresets[0];
 const sample = (changes: Partial<NetworkLink> = {}): NetworkLink => ({ ...base.result!.links[0], ...changes });
@@ -88,7 +89,7 @@ describe('链路显示规则', () => {
     expect(layer.getSource()!.getFeatures()).toEqual([normal, focused]);
     expect(JSON.stringify(links)).toBe(before);
   });
-  it('故障明暗始终保留 4 px 红线、备用虚线和选中外框；候选线不参与', () => {
+  it('故障明暗保留故障线宽、备用虚线和选中外框；候选线不参与', () => {
     const fault = sample({ state: 'FAULT', backup: true, isBackbone: false });
     const display: LinkDisplayState = { zoom: 6, faultDimmed: false };
     const layer = linkLayer([fault], base.baseline.stations, false, [fault.id], display);
@@ -96,7 +97,8 @@ describe('链路显示规则', () => {
     expect(style()[1].getStroke()!.getColor()).toBe('#ef5f64');
     display.faultDimmed = true;
     expect(style()[1].getStroke()!.getColor()).toBe('#ef5f6466');
-    expect(style()[1].getStroke()!.getWidth()).toBe(4);
+    expect(style()[1].getStroke()!.getWidth()).toBe(LINK_STATUS_STYLES.FAULT.width);
+    expect(LINK_STATUS_STYLES.FAULT.width).toBeGreaterThan(LINK_STATUS_STYLES.EXCELLENT.width);
     for (const item of style()) expect(item.getStroke()!.getLineDash()).toEqual([6, 6]);
     expect(style()[0].getStroke()!.getColor()).toBe('#c2edff');
     const candidate = linkLayer([fault], base.baseline.stations, true, [fault.id], display);

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createPinia, disposePinia } from 'pinia';
 import { h, nextTick, ssrContextKey, type App } from 'vue';
 import Point from 'ol/geom/Point';
 import Circle from 'ol/style/Circle';
@@ -19,7 +20,14 @@ vi.mock('../src/components/AppTable.vue', () => ({ default: { props: ['rows', 'c
 vi.mock('../src/components/AppDrawer.vue', () => ({ default: { props: ['visible'], setup: (props: any, { slots }: any) => () => props.visible ? h('aside', {}, slots.default?.()) : null } }));
 await clientTemplate(PlanningApiResultPanel, 'src/components/PlanningApiResultPanel.vue', 'deployment-review-render.ts');
 let app: App<HostNode> | undefined;
-afterEach(() => { app?.unmount(); app = undefined; vi.restoreAllMocks(); });
+let pinia: ReturnType<typeof createPinia> | undefined;
+afterEach(() => {
+  app?.unmount();
+  app = undefined;
+  if (pinia) disposePinia(pinia);
+  pinia = undefined;
+  vi.restoreAllMocks();
+});
 
 describe('修改意见：新增部署与冻结位置', () => {
   it('历史配置从同一快照节点回读缺失位置，并优先保留明确规划位置', () => {
@@ -47,6 +55,8 @@ describe('修改意见：新增部署与冻结位置', () => {
   it('实际结果组件显示新增名称、设备、定位操作；完整配置读取冻结坐标；没有重复覆盖标签', async () => {
     const result = readPlanningResult(resultDto()); result.nodes[1]!.isNewDeployment = true;
     const focus = vi.fn(); app = renderer.createApp({ render: () => h(PlanningApiResultPanel, { result, historical: false, ownerKey: 'owner', radioCount: 1, onFocus: focus }) });
+    pinia = createPinia();
+    app.use(pinia);
     app.provide(ssrContextKey, {}); const root = node('root'); app.mount(root); await nextTick();
     const tables = all(root, element => element.tag === 'table-probe');
     const addedTable = tables.find(table => (table.props.columns as {field:string}[]).some(column => column.field === 'deviceLabels'))!;

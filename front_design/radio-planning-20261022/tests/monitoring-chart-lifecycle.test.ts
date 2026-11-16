@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createRenderer, h, nextTick, reactive, ref, ssrContextKey, type App, type Component } from 'vue';
+import { createRenderer, h, nextTick, ref, ssrContextKey, type App, type Component } from 'vue';
 import ChartCanvas from '../src/components/ChartCanvas.vue';
 import DeviceMonitoringPanel from '../src/components/DeviceMonitoringPanel.vue';
 import { monitoringPresets } from '../src/mocks/monitoring-presets';
@@ -35,8 +35,16 @@ const renderer = createRenderer<Host, Host>({
   insertStaticContent: (text, parent, anchor) => { const target = node('#static', text); insert(target, parent, anchor); return [target, target]; },
 });
 const find = (root: Host, label: string): Host | undefined => root.props['aria-label'] === label ? root : root.children.map(child => find(child, label)).find(Boolean);
+const text = (host: Host): string => [host.text, ...host.children.map(text)].join(' ');
 const charts: { host: Host; setOption: ReturnType<typeof vi.fn>; resize: ReturnType<typeof vi.fn>; on: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }[] = [];
 const observers: { notify: () => void; disconnect: ReturnType<typeof vi.fn<() => void>> }[] = [];
+const frames = new Map<number, FrameRequestCallback>();
+let nextFrameId = 0;
+function flushFrames() {
+  const pending = [...frames.values()];
+  frames.clear();
+  for (const frame of pending) frame(0);
+}
 const apps: App[] = [];
 async function mount(component: Component, props: () => Record<string, unknown>) {
   const root = node('root'), app = renderer.createApp({ render: () => h(component, props()) });
@@ -52,6 +60,11 @@ beforeEach(() => {
   class TestDocument { activeElement = null; }
   vi.stubGlobal('Document', TestDocument); vi.stubGlobal('document', new TestDocument());
   vi.stubGlobal('ShadowRoot', class {});
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    frames.set(++nextFrameId, callback);
+    return nextFrameId;
+  });
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id));
   vi.stubGlobal('ResizeObserver', class {
     entry: typeof observers[number];
     constructor(callback: () => void) { this.entry = { notify: callback, disconnect: vi.fn() }; observers.push(this.entry); }
@@ -62,7 +75,7 @@ beforeEach(() => {
   });
 });
 afterEach(() => {
-  apps.splice(0).forEach(app => app.unmount()); charts.splice(0); observers.splice(0);
+  apps.splice(0).forEach(app => app.unmount()); charts.splice(0); observers.splice(0); frames.clear();
   vi.clearAllMocks(); vi.unstubAllGlobals();
 });
 
@@ -72,9 +85,11 @@ describe('态势图表绘制生命周期', () => {
     const option = ref({ series: [{ type: 'bar', data: [1] }] });
     const root = await mount(ChartCanvas, () => ({ option: option.value }));
     option.value.series[0].data = [3]; await nextTick(); observers[0].notify();
+    flushFrames();
     expect(probe.init).not.toHaveBeenCalled();
     const host = root.children[0]; host.clientWidth = 800; host.clientHeight = 280;
     observers[0].notify(); observers[0].notify();
+    expect(frames.size).toBe(1); flushFrames();
     expect(probe.init).toHaveBeenCalledTimes(1); expect(charts[0].setOption).toHaveBeenCalledTimes(1);
     expect(charts[0].setOption.mock.lastCall![0].series[0].data).toEqual([3]);
   });
@@ -83,11 +98,11 @@ describe('态势图表绘制生命周期', () => {
     await mount(ChartCanvas, () => ({ option: option.value }));
     const chart = charts[0]; chart.host.clientWidth = 0;
     option.value.series[0].data = [2]; await nextTick(); option.value.series[0].data = [4]; await nextTick();
-    observers[0].notify(); expect(chart.setOption).toHaveBeenCalledTimes(1); expect(chart.resize).not.toHaveBeenCalled();
-    chart.host.clientWidth = 800; observers[0].notify();
+    observers[0].notify(); flushFrames(); expect(chart.setOption).toHaveBeenCalledTimes(1); expect(chart.resize).not.toHaveBeenCalled();
+    chart.host.clientWidth = 760; observers[0].notify(); flushFrames();
     expect(probe.init).toHaveBeenCalledTimes(1); expect(chart.resize).toHaveBeenCalledTimes(1);
     expect(chart.setOption.mock.lastCall![0].series[0].data).toEqual([4]);
-    apps.pop()!.unmount(); observers[0].notify();
+    apps.pop()!.unmount(); observers[0].notify(); flushFrames();
     expect(chart.dispose).toHaveBeenCalledTimes(1); expect(observers[0].disconnect).toHaveBeenCalledTimes(1);
     expect(chart.resize).toHaveBeenCalledTimes(1); expect(probe.init).toHaveBeenCalledTimes(1);
   });
@@ -96,14 +111,18 @@ describe('态势图表绘制生命周期', () => {
     expect(charts[0].setOption.mock.lastCall![1]).toEqual(smoothUpdate ? { notMerge: false, replaceMerge: ['series'], lazyUpdate: true } : { notMerge: true });
     charts[0].on.mock.calls[0][1]({ data: { id: 'ND-0001' } }); expect(select).toHaveBeenCalledWith('ND-0001');
   });
-  it('设备表格搜索与筛选不重绘分布图，观测分布改变只更新对应图表', async () => {
-    const preset = monitoringPresets[0], frame = reactive(structuredClone(preset.frames[0]));
-    const root = await mount(DeviceMonitoringPanel, () => ({ network: preset.network, frame, selectedId: '' }));
-    expect(charts).toHaveLength(3);
-    find(root, '筛选监控设备')!.props['onUpdate:modelValue']('DV-0001');
-    find(root, '筛选设备观测状态')!.props['onUpdate:modelValue']('FAULT'); await nextTick();
-    expect(charts.map(chart => chart.setOption.mock.calls.length)).toEqual([1, 1, 1]);
-    frame.statistics.power[0].count++; await nextTick();
-    expect(charts.map(chart => chart.setOption.mock.calls.length)).toEqual([1, 2, 1]);
+  it('方案分布统计独立于列表搜索，缺少同版快照的设备计入未知', async () => {
+    const preset = monitoringPresets[0];
+    const root = await mount(DeviceMonitoringPanel, () => ({ network: preset.network, frame: preset.frames[0] }));
+    const status = find(root, '设备状态')!;
+    const power = find(root, '方案功率 / dBm')!;
+    const frequencies = find(root, '方案频率 / kHz')!;
+    expect(text(status)).toMatch(new RegExp('未知\\s+' + preset.network.devices.length + '\\s*台'));
+    expect(text(power)).toContain('未提供');
+    expect(text(frequencies)).toContain('未提供');
+    const distributions = [status, power, frequencies].map(text);
+    find(root, '筛选监控设备')!.props['onUpdate:modelValue']('no matching device'); await nextTick();
+    expect(text(root)).toContain('没有匹配的设备');
+    expect([status, power, frequencies].map(text)).toEqual(distributions);
   });
 });

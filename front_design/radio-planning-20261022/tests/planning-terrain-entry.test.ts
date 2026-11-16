@@ -18,6 +18,7 @@ interface Probe { layers: BaseLayer[]; view: View; dispose: ReturnType<typeof vi
 const probes = vi.hoisted(() => ({ maps: [] as Probe[] }));
 // 仅替换画布宿主；图层、事件、投影和地图模板实际执行。
 vi.mock('ol/Map', () => ({ default: class {
+  private readonly viewport = new EventTarget();
   layers: BaseLayer[] = []; view: View; dispose = vi.fn();
   constructor(options: { view: View }) {
     this.view = options.view;
@@ -26,6 +27,7 @@ vi.mock('ol/Map', () => ({ default: class {
   }
   setLayers(layers: BaseLayer[]) { this.layers = layers; }
   getView() { return this.view; } getSize() { return [960,640]; }
+  getViewport() { return this.viewport; }
   updateSize() {} on() {} forEachFeatureAtPixel() {}
 } }));
 vi.mock('ol/control', () => ({ defaults: () => ({ extend: () => [] }), ScaleLine: class {} }));

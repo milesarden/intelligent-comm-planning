@@ -31,6 +31,27 @@ describe('双页任务草稿与保存',()=>{
   it('打开已保存任务后清理此前默认任务的反馈，避免来源提示与保存状态冲突',async()=>{
     const {task}=await setup();task.notice='默认任务的载入反馈';expect(await task.open('T1',false)).toBe(true);expect(task.notice).toBe('已打开任务“测试通信任务”及服务端保存版本。');expect(task.notice).not.toContain('默认任务的载入反馈');expect(task.saved).not.toBeNull();
   });
+  it('打开冻结方案所关联的任务时，编辑引用仍在加载也可读取方案', async () => {
+    const { task } = await setup();
+    const lookup = vi.mocked(previewService.getResourceObject);
+    const original = lookup.getMockImplementation()!;
+    let release!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    lookup.mockClear().mockImplementation(async input => {
+      await waiting;
+      return original(input);
+    });
+    try {
+      const opened = vi.fn();
+      const result = task.openPlanTask('T1').then(opened);
+      await vi.waitFor(() => expect(opened).toHaveBeenCalledWith(true));
+      expect(lookup).toHaveBeenCalled();
+      expect(task.saved?.taskId).toBe('T1');
+      await result;
+    } finally {
+      release();
+    }
+  });
   it.each(['planning','gis'] as const)('%s 清空开始时间按未设置保存，非法非空值仍拒绝',async context=>{
     const {task}=await setup();await task.initialize(context);task.draft!.startTime='';
     const save=vi.spyOn(previewService,'saveTaskInput');expect(await task.save()).toBe(true);

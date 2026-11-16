@@ -59,12 +59,13 @@ describe('规划地图要素', () => {
     const feature = normal.getSource()!.getFeatures()[0];
     const defaultStyle = normal.getStyleFunction()!(feature, 1) as Style;
     const selectedStyle = highlighted.getStyleFunction()!(feature, 1) as Style[];
-    expect(defaultStyle.getStroke()!.getWidth()).toBe(3);
-    expect(defaultStyle.getStroke()!.getColor()).toBe(LINK_STATUS_STYLES.EXCELLENT.color);
+    const excellent = LINK_STATUS_STYLES.EXCELLENT;
+    expect(defaultStyle.getStroke()!.getWidth()).toBe(excellent.width);
+    expect(defaultStyle.getStroke()!.getColor()).toBe(excellent.color);
     // 高亮不能将故障等业务颜色覆盖为选中色，也不能填满备用线的虚线间隙。
     expect(selectedStyle).toHaveLength(2);
-    expect(selectedStyle[0].getStroke()!.getWidth()).toBeGreaterThan(3);
-    expect(selectedStyle[1].getStroke()!.getWidth()).toBe(3);
+    expect(selectedStyle[0].getStroke()!.getWidth()).toBeGreaterThan(excellent.width);
+    expect(selectedStyle[1].getStroke()!.getWidth()).toBe(excellent.width);
     expect(selectedStyle[1].getStroke()!.getColor()).toBe(defaultStyle.getStroke()!.getColor());
     const other = normal.getSource()!.getFeatures()[1];
     expect(highlighted.getStyleFunction()!(other, 1)).toBeInstanceOf(Style);
