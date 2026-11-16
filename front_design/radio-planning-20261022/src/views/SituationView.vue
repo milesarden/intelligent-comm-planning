@@ -16,7 +16,7 @@
         <button v-if="frozenView && analysisReturn" class="btn small" :onClick="analysisReturn.open">返回规划方案</button>
         <!-- 页面标题与导航同名，沿用业务页面共享的标题样式。 -->
         <h1>GIS 工作台</h1>
-        <span class="divider" /><span class="muted">太行山地区域通信保障</span
+        <span class="divider" /><span class="muted">{{ env.plainTerrain ? '平原区域通信保障' : '太行山地区域通信保障' }}</span
         ><span
           class="chip blue"
           aria-label="当前视图数据来源"
