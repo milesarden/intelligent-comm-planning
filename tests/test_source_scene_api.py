@@ -40,18 +40,31 @@ def plain_service():
 
 
 def test_source_workspace_routes_and_session_isolation(tmp_path, plain_service):
-    (tmp_path / "index.html").write_text("<title>双场景</title>", encoding="utf-8")
+    dist = tmp_path / "dist"
+    hills_maps = dist / "maps"
+    plain_maps = tmp_path / "plain-maps"
+    hills_maps.mkdir(parents=True)
+    plain_maps.mkdir()
+    (dist / "index.html").write_text("<title>双场景</title>", encoding="utf-8")
+    for scene, maps in (("hills", hills_maps), ("plain", plain_maps)):
+        (maps / "sr4-terrain.json").write_text('{"scene":"' + scene + '"}', encoding="utf-8")
+        (maps / "sr4-terrain.png").write_bytes(scene.encode())
+    (plain_maps / "raw.tif").write_bytes(b"not a public map")
     app = FastAPI()
 
     @app.get("/api/v1/marker")
     def marker():
         return {"scene": "hills"}
 
-    mount_workspace_static(app, tmp_path, plain_service)
+    mount_workspace_static(app, dist, plain_service, plain_maps)
     with TestClient(app) as client:
         assert client.get("/api/v1/marker").json() == {"scene": "hills"}
         assert client.get("/").text == client.get("/scenes/plain/").text
         assert "no-store" in client.get("/scenes/plain/").headers["Cache-Control"]
+        assert client.get("/maps/sr4-terrain.json").json() == {"scene": "hills"}
+        assert client.get("/scenes/plain/maps/sr4-terrain.json").json() == {"scene": "plain"}
+        assert client.get("/scenes/plain/maps/sr4-terrain.png").content == b"plain"
+        assert client.get("/scenes/plain/maps/raw.tif").status_code == 404
         response = client.post("/scenes/plain/api/v1/echo?scene=plain", content=b"plan-data", headers={
             "Cookie": "radio_local_session=hills; radio_plain_session=plain",
             "X-Forwarded-Proto": "https",
