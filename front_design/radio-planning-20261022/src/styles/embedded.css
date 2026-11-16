@@ -27,6 +27,13 @@ body.agent-embed-mode {
   --red: #c73d4d;
   --radius: 8px;
   --surface-hover: #edf4ff;
+  --gis-toolbar-muted: #4c627a;
+  --gis-edit-border: #1683a6;
+  --gis-edit-background: #e8f5fa;
+  --gis-edit-text: #135a72;
+  --gis-pick-border: #b57916;
+  --gis-pick-background: #fff3db;
+  --gis-pick-text: #754c0d;
   --p-content-background: #ffffff;
   --p-content-color: #24354b;
   --p-content-border-color: #dce4ef;
