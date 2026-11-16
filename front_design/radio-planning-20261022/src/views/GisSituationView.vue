@@ -21,11 +21,9 @@
     <div class="source-badge" :class="{ example: frame.example }" aria-live="polite">
       <span class="source-dot" />
       <strong>{{ frame.label }}</strong>
-      <span>{{ frame.example ? '受控构造示例 · 非实测' : frame.version + (frame.key === 'plain-terrain' ? '' : ' · 算法预测') }}</span>
+      <span>{{ frame.example ? '内置示例 · 非实测' : frame.version + (frame.key === 'plain-terrain' ? '' : ' · 算法预测') }}</span>
     </div>
     <p v-if="model.displayingLiveInterferences" class="interference-source-badge">干扰源已更新；规划链路仍为原计算结果</p>
-    <p v-if="model.error" class="map-notice error" role="alert">{{ model.error }}</p>
-    <p v-else-if="model.notice" class="map-notice" role="status">{{ model.notice }}</p>
     <span v-if="model.busy" class="read-status" role="status">正在核对态势来源…</span>
     <SituationCoverageLegend v-if="model.coverage" class="coverage-legend-position" :overlay="model.coverage" />
     <details v-if="embeddedModule" class="embedded-map-settings">
@@ -83,14 +81,20 @@
       </section>
     </Teleport>
     </template>
-    <span v-if="plainWorkspace" class="terrain-scene-control">地形场景　平原</span>
-    <label v-else class="terrain-scene-control">
-      地形场景
-      <select v-model="terrainScene">
-        <option value="hills">丘陵</option>
-        <option value="plain">平原</option>
-      </select>
-    </label>
+    <div class="map-footnotes">
+      <template v-if="plainWorkspace || terrainScene === 'hills'">
+        <p v-if="model.error" class="map-notice error" role="alert">{{ model.error }}</p>
+        <p v-else-if="model.notice" class="map-notice" role="status">{{ model.notice }}</p>
+      </template>
+      <span v-if="plainWorkspace" class="terrain-scene-control">地形场景　平原</span>
+      <label v-else class="terrain-scene-control">
+        地形场景
+        <select v-model="terrainScene">
+          <option value="hills">丘陵</option>
+          <option value="plain">平原</option>
+        </select>
+      </label>
+    </div>
   </section>
 </template>
 
@@ -111,7 +115,7 @@ const terrainScene = ref<'hills' | 'plain'>('hills');
 const plainWorkspace = env.plainTerrain;
 const frame = computed(() => model.frame);
 const hoverContext = computed(() => ({ key: frame.value.key + ':' + (model.displayingLiveInterferences ? model.liveInterferences?.revision : 'frozen'),
-  source: '节点/设备：' + (frame.value.example ? '受控构造示例 · 冻结规划参数 · 非实测' : '已保存冻结规划参数 · 非实测') + '；' + model.interferenceSourceLabel,
+  source: '节点/设备：' + (frame.value.example ? '内置示例 · 冻结规划参数 · 非实测' : '已保存冻结规划参数 · 非实测') + '；' + model.interferenceSourceLabel,
   models: frame.value.example ? gisExampleMetadata.models : [] }));
 const lastCheckedTime = computed(() => model.lastCheckedAt ? new Date(model.lastCheckedAt).toLocaleTimeString('zh-CN', { hour12: false }) : '');
 function changeAutoFollow(event: Event) { model.setAutoFollow((event.target as HTMLInputElement).checked); }
@@ -143,11 +147,19 @@ onMounted(async () => {
 <style scoped>
 .gis-situation { position: relative; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: #081621; }
 .gis-situation :deep(.map-wrap) { min-height: 0; height: 100%; }
-.terrain-scene-control {
+.map-footnotes {
   position: absolute;
   left: 16px;
   bottom: 50px;
   z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: min(540px, calc(100% - 32px));
+  pointer-events: none;
+}
+.terrain-scene-control {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -157,6 +169,7 @@ onMounted(async () => {
   background: #0c1a2bf0;
   color: #dce7f5;
   font-size: var(--font-control);
+  pointer-events: auto;
 }
 .terrain-scene-control select {
   padding: 3px 7px;
@@ -178,7 +191,7 @@ onMounted(async () => {
 .source-dot { width: 6px; height: 6px; border-radius: 50%; background: #6acebb; }
 .interference-source-badge { position: absolute; left: 76px; top: 59px; max-width: calc(100% - 105px); margin: 0; padding: 6px 10px; border: 1px solid #79643d; border-radius: 6px; background: #142332ed; color: #e4c88e; font-size: var(--font-caption); line-height: 1.7; pointer-events: none; }
 .example .source-dot { background: #ecc582; }
-.map-notice { position: absolute; bottom: 70px; left: 18px; max-width: min(620px, calc(100% - 36px)); margin: 0; padding: 9px 12px; border: 1px solid #416176; border-radius: 6px; background: #0b2032ed; color: #c7dfef; font-size: var(--font-control); line-height: 1.7; pointer-events: none; }
+.map-notice { margin: 0; padding: 9px 12px; border: 1px solid #416176; border-radius: 6px; background: #0b2032ed; color: #c7dfef; font-size: var(--font-control); line-height: 1.7; }
 .map-notice.error { border-color: #876745; color: #efc68f; }
 .read-status { position: absolute; right: 18px; top: 20px; padding: 9px 12px; border-radius: 6px; background: #0b2032ed; color: #b4d8f0; font-size: var(--font-control); pointer-events: none; }
 .situation-controls { display: grid; gap: 12px; border-top: 1px solid #2f455b; padding-top: 14px; margin-top: 14px; font-size: var(--font-control); }

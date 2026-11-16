@@ -2030,9 +2030,12 @@ onBeforeUnmount(() => {
 }
 .map-legend {
   position: absolute;
-  bottom: 29px;
+  bottom: 56px;
   right: 15px;
   display: flex;
+  flex-wrap: wrap;
+  max-width: calc(100% - 30px);
+  box-sizing: border-box;
   gap: 13px;
   padding: 8px 11px;
   background: #0b1a2be8;
