@@ -28,11 +28,21 @@
         <dt>功率上限</dt><dd>{{ config.data.model.tx_power_max_dbm }} dBm</dd>
         <dt>模式／端口协议</dt><dd>待确认</dd>
       </dl>
-      <label>请求功率（dBm）<input :value="config.power" @input="updateValue('power', $event)" aria-label="请求功率" type="number" step="any" :disabled="config.locked" /></label>
-      <label>请求频率（kHz）<input :value="config.frequency" @input="updateValue('frequency', $event)" aria-label="请求频率" type="number" step="any" :disabled="config.locked" /></label>
+      <label>请求功率（dBm）
+        <input :value="config.power" @input="updateValue('power', $event)" aria-label="请求功率"
+          :aria-invalid="!!config.powerRangeError" :aria-describedby="config.powerRangeError ? 'configuration-power-error' : undefined"
+          type="number" step="any" :disabled="config.locked" />
+      </label>
+      <p v-if="config.powerRangeError" id="configuration-power-error" role="status" class="notice warn">{{ config.powerRangeError }}</p>
+      <label>请求频率（kHz）
+        <input :value="config.frequency" @input="updateValue('frequency', $event)" aria-label="请求频率"
+          :aria-invalid="!!config.frequencyRangeError" :aria-describedby="config.frequencyRangeError ? 'configuration-frequency-error' : undefined"
+          type="number" step="any" :disabled="config.locked" />
+      </label>
+      <p v-if="config.frequencyRangeError" id="configuration-frequency-error" role="status" class="notice warn">{{ config.frequencyRangeError }}</p>
       <div class="toolbar">
         <button class="btn" :disabled="config.busy || !!config.pending || !config.readable" @click="config.refreshContext">重新读取来源</button>
-        <button class="btn" :disabled="config.locked" @click="config.validate">校验</button>
+        <button class="btn" :disabled="config.locked || !!config.powerRangeError || !!config.frequencyRangeError" @click="config.validate">校验</button>
         <button class="btn primary" :disabled="config.locked || !config.validated" @click="config.submit">提交系统受理</button>
       </div>
     </section>
