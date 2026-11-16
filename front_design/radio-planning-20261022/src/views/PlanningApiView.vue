@@ -134,7 +134,6 @@
           :stations="[]"
           resource-read
           :terrain-basemap="terrainBasemap"
-          :terrain-scenes="planning.step === 1"
           :show-roads="false"
           :resource-frame="planning.step === 1 ? resources.frame : null"
           :resource-bounds="bounds"

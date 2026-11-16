@@ -734,7 +734,6 @@
             ref="mapRef"
             gis-surface
             :hover-preview="resourceHoverContext"
-            :terrain-scenes="!taskViewing && !diagnosisMode && !monitorMode && !snapshotMode"
             :terrain-basemap="terrainBasemap"
             :map-caption="terrainBasemap ? 'DEM 地形' : terrainMessage || '地形加载中'"
             :resource-read="

@@ -1,12 +1,13 @@
 <template>
   <section class="gis-situation" aria-label="GIS 态势只读地图">
+    <PlainTerrainMap v-if="terrainScene === 'plain'" />
+    <template v-else>
     <MapCanvas
       ref="map"
       :stations="[]"
       resource-read
       gis-surface
       readonly-situation
-      terrain-scenes
       :frozen-network="frame.network"
       :terrain-basemap="frame.basemap"
       :frozen-coverage="model.coverage"
@@ -81,12 +82,21 @@
         </details>
       </section>
     </Teleport>
+    </template>
+    <label class="terrain-scene-control">
+      地形场景
+      <select v-model="terrainScene">
+        <option value="hills">丘陵</option>
+        <option value="plain">平原</option>
+      </select>
+    </label>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, reactive, ref, type Ref } from 'vue';
 import MapCanvas from '../components/MapCanvas.vue';
+import PlainTerrainMap from '../components/PlainTerrainMap.vue';
 import SituationCoverageLegend from '../components/SituationCoverageLegend.vue';
 import { gisExampleMetadata, useGisSituation } from '../composables/useGisSituation';
 const menuTarget = inject<Ref<HTMLElement | null>>('applicationMenuTarget', ref(null));
@@ -95,6 +105,7 @@ const embeddedControlsTarget = ref<HTMLElement | null>(null);
 const controlsTarget = computed(() => embeddedModule ? embeddedControlsTarget.value : menuTarget.value);
 const model = reactive(useGisSituation());
 const map = ref<InstanceType<typeof MapCanvas>>();
+const terrainScene = ref<'hills' | 'plain'>('hills');
 const frame = computed(() => model.frame);
 const hoverContext = computed(() => ({ key: frame.value.key + ':' + (model.displayingLiveInterferences ? model.liveInterferences?.revision : 'frozen'),
   source: '节点/设备：' + (frame.value.example ? '受控构造示例 · 冻结规划参数 · 非实测' : '已保存冻结规划参数 · 非实测') + '；' + model.interferenceSourceLabel,
@@ -129,6 +140,30 @@ onMounted(async () => {
 <style scoped>
 .gis-situation { position: relative; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: #081621; }
 .gis-situation :deep(.map-wrap) { min-height: 0; height: 100%; }
+.terrain-scene-control {
+  position: absolute;
+  left: 16px;
+  bottom: 50px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 1px solid #386179;
+  border-radius: 5px;
+  background: #0c1a2bf0;
+  color: #dce7f5;
+  font-size: var(--font-control);
+}
+.terrain-scene-control select {
+  padding: 3px 7px;
+  border: 1px solid #476984;
+  border-radius: 3px;
+  background: #142b42;
+  color: inherit;
+  font: inherit;
+  color-scheme: dark;
+}
 .embedded-map-settings { position:absolute; top:16px; right:16px; z-index:35; width:min(340px, calc(100% - 32px)); color:#dce7f5; border:1px solid #386179; border-radius:7px; background:#0c1d2ff2; box-shadow:0 8px 24px #0004; }
 .embedded-map-settings > summary { cursor:pointer; padding:11px 14px; font-weight:600; }
 .embedded-map-settings[open] { max-height:calc(100% - 32px); overflow:auto; }

@@ -1,0 +1,23 @@
+{
+  "name": "华北平原",
+  "projection": "EPSG:4326",
+  "extent": [
+    114.47916582495557,
+    36.760407781765274,
+    115.83583417504443,
+    37.83959221823472
+  ],
+  "center": [
+    115.1575,
+    37.3
+  ],
+  "widthKm": 120,
+  "heightKm": 120,
+  "elevationMetres": [
+    10,
+    195
+  ],
+  "source": "2026-09-11 地形采集档案 DEM",
+  "sourceSha256": "04506608fecd0dd6fb3b380de60bcae6b96abc1783e991289d4e36058b324c53",
+  "imageSha256": "09f5c6d65f9f91eb4a44582f10d4b0f10c388e733db9bc701c727e22d379918c"
+}

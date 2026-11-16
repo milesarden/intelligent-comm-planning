@@ -1,6 +1,6 @@
 import type { Bounds, ResourceTerrain } from '../types/resource-read';
 
-export interface TerrainBasemap { url: string; extent: Bounds; source: string; sourceSha256?: string; dispose(): void }
+export interface TerrainBasemap { url: string; extent: Bounds; source: string; dispose(): void }
 
 const sha256 = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
 const bounds = (value: unknown): value is Bounds => Array.isArray(value) && value.length === 4
@@ -41,7 +41,7 @@ export async function loadTerrainBasemap(
   if (actual !== row.image_sha256) throw new Error('地形图片校验失败，请重新部署地形资源。');
   const url = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }));
   let disposed = false;
-  return { url, extent: row.extent, source: row.source, sourceSha256: row.source_sha256, dispose() {
+  return { url, extent: row.extent, source: row.source, dispose() {
     if (!disposed) { disposed = true; URL.revokeObjectURL(url); }
   } };
 }

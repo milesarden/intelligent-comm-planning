@@ -30,22 +30,6 @@
       :readonly="readonlySituation"
     />
     <div v-if="readonlySituation" class="situation-area-caption">规划区域为120kmx120km</div>
-    <label
-      v-if="availableTerrainScenes"
-      class="terrain-scene-control"
-      :class="{ 'situation-terrain-scene': readonlySituation }"
-      title="切换地形浏览范围"
-    >
-      地形场景
-      <select :value="terrainScene" :disabled="picking" @change="changeTerrainScene">
-        <option value="overview">全域</option>
-        <option value="hills">丘陵</option>
-        <option value="plain">平原</option>
-      </select>
-    </label>
-    <p v-if="readonlySituation && terrainRenderError" class="situation-terrain-error" role="status">
-      地形图片显示失败，可返回全域。
-    </p>
     <div
       v-if="picking"
       :key="gisPick?.key"
@@ -110,7 +94,7 @@
       v-if="!readonlySituation"
       class="map-reset btn small"
       :title="resourceRead ? '返回资源范围' : '显示全部节点'"
-      @click="resetMapExtent"
+      @click="fit"
     >
       <i class="pi pi-expand" />全域
     </button>
@@ -456,9 +440,6 @@ import Feature from 'ol/Feature';
 import ImageLayer from 'ol/layer/Image';
 import ImageStatic from 'ol/source/ImageStatic';
 import type { TerrainBasemap } from '../services/terrain-basemap';
-import terrainSceneMetadata from '../assets/terrain/scenes.json';
-import hillsImage from '../assets/terrain/hills.png';
-import plainImage from '../assets/terrain/plain.png';
 import { defaults, ScaleLine } from 'ol/control';
 import { boundingExtent } from 'ol/extent';
 import { resourceReadLayer, resourceViewport } from '../maps/resource-read-layers';
@@ -521,7 +502,6 @@ const props = withDefaults(
     resourceRead?: boolean;
     readonlySituation?: boolean;
     terrainBasemap?: TerrainBasemap | null;
-    terrainScenes?: boolean;
     // 公共资源底层可与完整 GIS 图层组合，编辑/冻结网络自行提供底层。
     richScene?: boolean;
     // GIS 文案作用域独立于分页渲染能力，其他地图维持原展示。
@@ -1055,59 +1035,38 @@ function updateRoadClip(){
   settingRoadExtent=true;try{roads.setExtent(target);}finally{settingRoadExtent=false;}
 }
 const roadClipListener=roads.on('change:extent',()=>{if(!settingRoadExtent){originalRoadExtent=roads.getExtent()?.slice();updateRoadClip();}});
-const terrainScene = ref<'overview' | 'hills' | 'plain'>('overview');
-const terrainSceneMaps: Record<'hills' | 'plain', Pick<TerrainBasemap, 'url' | 'extent'>> = {
-  hills: { url: hillsImage, extent: terrainSceneMetadata.bounds.hills as Bounds },
-  plain: { url: plainImage, extent: terrainSceneMetadata.bounds.plain as Bounds },
-};
-const availableTerrainScenes = computed(() =>
-  props.terrainScenes && props.terrainBasemap?.sourceSha256 === terrainSceneMetadata.sourceSha256,
-);
-const selectedTerrain = computed(() =>
-  availableTerrainScenes.value && terrainScene.value !== 'overview'
-    ? terrainSceneMaps[terrainScene.value]
-    : null,
-);
-const terrainImages = computed(() => {
-  if (!props.terrainBasemap) return [];
-  return selectedTerrain.value ? [props.terrainBasemap, selectedTerrain.value] : [props.terrainBasemap];
-});
 const terrainRenderError = ref(false);
-let terrainLayers: ImageLayer<ImageStatic>[] = [];
-let terrainKey: typeof terrainImages.value | null = null;
+let terrainLayer: ImageLayer<ImageStatic> | null = null;
+let terrainKey: TerrainBasemap | null = null;
 let terrainListeners: EventsKey[] = [];
 function clearTerrain() {
   unByKey(terrainListeners);
   terrainListeners = [];
-  for (const layer of terrainLayers) {
-    layer.getSource()?.dispose();
-    layer.dispose();
-  }
-  terrainLayers = [];
+  terrainLayer?.getSource()?.dispose();
+  terrainLayer?.dispose();
+  terrainLayer = null;
   terrainKey = null;
   terrainRenderError.value = false;
 }
 function updateTerrain() {
-  if (terrainKey === terrainImages.value) return;
+  if (terrainKey === (props.terrainBasemap ?? null)) return;
   clearTerrain();
   clearFrozenCoverage();
-  terrainKey = terrainImages.value;
-  const layersWithErrors = new Set<ImageLayer<ImageStatic>>();
-  // 场景底图叠在全域底图上，场景边缘的站点仍保留地形背景。
-  terrainLayers = terrainKey.map((image) => {
-    const source = new ImageStatic({ url: image.url, imageExtent: image.extent, projection: 'EPSG:4326' });
-    const layer = new ImageLayer({ source });
-    terrainListeners.push(source.on('imageloaderror', () => {
-      layersWithErrors.add(layer);
-      terrainRenderError.value = true;
-      layer.setVisible(false);
-    }), source.on('imageloadend', () => {
-      layersWithErrors.delete(layer);
-      terrainRenderError.value = layersWithErrors.size > 0;
-      layer.setVisible(true);
-    }));
-    return layer;
-  });
+  if (!props.terrainBasemap) return;
+  terrainKey = props.terrainBasemap;
+  const source = new ImageStatic({ url: terrainKey.url, imageExtent: terrainKey.extent, projection: 'EPSG:4326' });
+  const layer = new ImageLayer({ source });
+  terrainLayer = layer;
+  // 换版后移除监听；迟到的旧图事件不得影响新图层。
+  terrainListeners = [source.on('imageloaderror', () => {
+    if (terrainLayer !== layer) return;
+    terrainRenderError.value = true;
+    layer.setVisible(false);
+  }), source.on('imageloadend', () => {
+    if (terrainLayer !== layer) return;
+    terrainRenderError.value = false;
+    layer.setVisible(true);
+  })];
 }
 function paint() {
   if (!map) return;
@@ -1138,7 +1097,7 @@ function paint() {
     impactObjectCounts.value = { nodes: 0, links: 0 };
     updateLinkDisplay();
     roads.setVisible(props.showRoads);
-    const layers: import('ol/layer/Base').default[] = [...terrainLayers, roads];
+    const layers: import('ol/layer/Base').default[] = [...(terrainLayer ? [terrainLayer] : []), roads];
     if(frozenLayer&&frozenCoverageRender) layers.push(frozenLayer,frozenCoverageRender.deviceLayer);
     if (props.planningOverlay?.coverage && props.showCoverage) {
       const url = coverageImage.url.value;
@@ -1335,7 +1294,7 @@ function paint() {
     });
   }
   map.setLayers([
-    ...terrainLayers,
+    ...(terrainLayer ? [terrainLayer] : []),
     roads,
     ...deviceCoverageLayers,
     ...(mockCoverageLayers
@@ -1451,14 +1410,6 @@ function fitDeviceCoverage(snapshotId: string) {
     );
 }
 function fit() {
-  if (map && selectedTerrain.value) {
-    const [west, south, east, north] = selectedTerrain.value.extent;
-    map.getView().fit(boundingExtent([
-      projectCoordinate([west, south]),
-      projectCoordinate([east, north]),
-    ]), { padding: [35, 22, 35, 22], maxZoom: 12 });
-    return;
-  }
   if(map&&props.readonlySituation){map.getView().fit(situationAreaExtent(),{padding:[24,24,24,24]});return;}
   if(map&&props.frozenCoverage){
     const layer=updateFrozenCoverage(),source=layer?.getSource(),extent=source?.getExtent();
@@ -1493,17 +1444,6 @@ function fit() {
       padding: [65, 65, 60, 65],
       maxZoom: 11,
     });
-}
-function resetMapExtent() {
-  terrainScene.value = 'overview';
-  fit();
-}
-function changeTerrainScene(event: Event) {
-  const scene = (event.target as HTMLSelectElement).value;
-  if (scene !== 'overview' && scene !== 'hills' && scene !== 'plain') return;
-  terrainScene.value = scene;
-  clearHoverPreview();
-  fit();
 }
 function locate() {
   const candidate =
@@ -1796,7 +1736,7 @@ onMounted(() => {
 watch(
   () => [
     props.resourceRead,
-    terrainImages.value,
+    props.terrainBasemap,
     props.richScene,
     props.resourceFrame,
     props.resourceSelectedKind,
@@ -1897,7 +1837,7 @@ watch(() => props.selectedCandidateLinkId, locate);
 defineExpose({
   // 任务查看复用地图现有全域定位，仅调整显示范围。
   fit,
-  fitAll: resetMapExtent,
+  fitAll: fit,
   returnFrozenNetwork: fit,
   focusFrozenCoverage: () => {const source=updateFrozenCoverage()?.getSource(),extent=source?.getExtent();if(map&&source?.getFeatures().length&&extent)map.getView().fit(extent,{padding:[50,50,50,50],maxZoom:13,duration:200});},
   locate,
@@ -2059,43 +1999,6 @@ onBeforeUnmount(() => {
 }
 .map-caption .terrain-error {
   color: #f0b972;
-}
-.terrain-scene-control {
-  position: absolute;
-  top: 53px;
-  left: 17px;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
-  border: 1px solid #386179;
-  border-radius: 5px;
-  background: #0c1a2bf0;
-  color: #dce7f5;
-  font-size: var(--font-control);
-}
-.terrain-scene-control select {
-  color-scheme: dark;
-  padding: 3px 6px;
-  border: 1px solid #476984;
-  border-radius: 3px;
-  background: #142b42;
-  color: inherit;
-  font: inherit;
-}
-.situation-terrain-scene {
-  top: auto;
-  bottom: 50px;
-}
-.situation-terrain-error {
-  position: absolute;
-  bottom: 88px;
-  left: 17px;
-  padding: 5px 8px;
-  background: #0c1a2bf0;
-  color: #f0b972;
-  font-size: var(--font-control);
 }
 .map-dot {
   width: 5px;
