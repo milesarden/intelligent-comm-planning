@@ -6,8 +6,8 @@ import type { PlanningPlanSummary } from '../src/types/planning-api';
 import type { TerrainBasemap } from '../src/services/terrain-basemap';
 import type { GisNetwork, GisPlanSurface } from '../src/types/gis-plan';
 import type { FrozenCoverageCache } from '../src/types/frozen-coverage';
+import type { ResourceTerrain } from '../src/types/resource-read';
 import plainTerrain from '../src/assets/terrain/plain.json';
-import type { ResourceReadWorkspace } from '../src/types/resource-read';
 
 function row(id = 'P1', state: PlanningPlanSummary['state'] = 'SAVED', savedAt = '2026-11-03T08:00:00+08:00'): PlanningPlanSummary {
   return { id, taskId: 'T1', name: `方案 ${id}`, version: 'V2', state, current: false, sourceChanged: false, savedAt };
@@ -23,8 +23,11 @@ function deferred<T>() {
 }
 function fixture() {
   const maps: TerrainBasemap[] = [];
-  const terrain = vi.fn(async () => {
-    const map: TerrainBasemap = { url: `blob:verified-${maps.length}`, extent: gisExampleFrame().terrain.bounds, source: '受控 DEM', dispose: vi.fn() };
+  const referenceTerrain = gisExampleFrame().terrain;
+  // 地形读取失败和等待用例需要新版 DEM。同版的已核验底图会直接复用。
+  const savedTerrain = { ...referenceTerrain, sourceSha256: 'f'.repeat(64) };
+  const terrain = vi.fn(async (expected: ResourceTerrain | null | undefined) => {
+    const map: TerrainBasemap = { url: `blob:verified-${maps.length}`, extent: (expected ?? referenceTerrain).bounds, source: '受控 DEM', dispose: vi.fn() };
     maps.push(map); return map;
   });
   const services: GisSituationServices = {
@@ -32,7 +35,7 @@ function fixture() {
     plans: {
       getNetwork: vi.fn(async query => network(query.planId)),
       getSurface: vi.fn(async (_query, source): Promise<GisPlanSurface> => ({ identity: source.identity,
-        terrain: gisExampleFrame().terrain, terrain_notice: '', coverage: null, coverage_notice: '未保存覆盖' })),
+        terrain: savedTerrain, terrain_notice: '', coverage: null, coverage_notice: '未保存覆盖' })),
     },
     terrain,
   };
@@ -40,22 +43,52 @@ function fixture() {
 }
 
 describe('GIS只读首页受控示例与整帧刷新', () => {
-  it('平原工作区首屏无丘陵台站，拒绝其他 DEM 并使用同版平原底图', async () => {
+  it('平原工作区首屏使用平原内置点线和对应 DEM，不依赖库内已有方案', async () => {
     const { services, terrain } = fixture();
-    const hillTerrain = gisExampleFrame().terrain;
-    const workspace = (source: ResourceReadWorkspace['terrain']) => ({ terrain: source } as ResourceReadWorkspace);
-    const loadResourceReadContext = vi.fn().mockResolvedValueOnce(workspace(hillTerrain))
-      .mockResolvedValueOnce(workspace({ ...hillTerrain, sourceSha256: plainTerrain.sourceSha256 }));
+    const loadResourceReadContext = vi.fn();
     const model = createGisSituation({ ...services, resources: { loadResourceReadContext, queryResourceInterferences: vi.fn() } }, true);
-    expect(model.frame.value.label).toBe('平原地形');
-    expect(model.frame.value.network.nodes).toHaveLength(0);
+    const frame = model.frame.value;
+    const [west, south, east, north] = plainTerrain.extent;
+    const contained = ([lon, lat]: readonly number[]) => lon >= west && lon <= east && lat >= south && lat <= north;
+    expect(frame.label).toBe('平原默认态势');
+    expect(frame.example).toBe(true);
+    expect(frame.network.identity.state).toBe('REFERENCE');
+    expect(frame.network.identity.plan_id).not.toBe(gisExampleFrame().network.identity.plan_id);
+    expect(frame.network.nodes.length).toBeGreaterThan(100);
+    expect(frame.network.nodes.every(node => contained(node.coordinate))).toBe(true);
+    expect(frame.network.devices.some(device => device.device_class === 'HF')).toBe(true);
+    expect(frame.network.devices.some(device => device.device_class === 'VUHF')).toBe(true);
+    expect(frame.network.links.length).toBeGreaterThan(0);
+    expect(frame.coverage).toBeNull();
+    expect(frame.terrain.sourceSha256).toBe(plainTerrain.sourceSha256);
+    expect(model.exampleModels.length).toBeGreaterThan(0);
     await model.initialize();
-    expect(terrain).not.toHaveBeenCalled();
-    expect(model.error.value).toContain('平原 DEM 版本不匹配');
+    expect(terrain).toHaveBeenCalledWith(frame.terrain, globalThis.fetch, expect.any(String), expect.any(AbortSignal));
+    expect(loadResourceReadContext).not.toHaveBeenCalled();
+    expect(services.queryPlans).not.toHaveBeenCalled();
+    expect(model.frame.value.basemap?.extent).toEqual(frame.terrain.bounds);
+    model.stop();
+  });
+  it('平原跟随真实转正方案，也能返回同场景的冻结内置示例', async () => {
+    const { services } = fixture();
+    const model = createGisSituation(services, true), initial = model.frame.value;
+    const confirmed = { ...initial.network, identity: { ...initial.network.identity,
+      task_id: 'T1', plan_id: 'P-PLAIN', snapshot_id: 'SNAP-PLAIN', state: 'CONFIRMED' as const } };
+    vi.mocked(services.queryPlans).mockResolvedValue({ items: [row('P-PLAIN', 'CONFIRMED')], total: 1, pageNum: 1, pageSize: 20 });
+    vi.mocked(services.plans.getNetwork).mockResolvedValue(confirmed);
+    vi.mocked(services.plans.getSurface).mockResolvedValue({ identity: confirmed.identity,
+      terrain: initial.terrain, terrain_notice: '', coverage: null, coverage_notice: '未提供' });
     await model.initialize();
-    expect(terrain).toHaveBeenCalledOnce();
-    expect(model.frame.value.terrain.sourceSha256).toBe(plainTerrain.sourceSha256);
-    expect(model.frame.value.basemap).not.toBeNull();
+    await model.refreshLatest();
+    expect(model.frame.value.example).toBe(false);
+    expect(model.frame.value.network.identity.plan_id).toBe('P-PLAIN');
+    expect(model.autoFollow.value).toBe(true);
+    await model.showExample();
+    expect(model.frame.value.example).toBe(true);
+    expect(model.frame.value.network.identity).toEqual(initial.network.identity);
+    expect(model.frame.value.terrain).toEqual(initial.terrain);
+    expect(model.frame.value.coverage).toBeNull();
+    expect(model.autoFollow.value).toBe(false);
     model.stop();
   });
   it('空库首次进入立即有受控示例，不查询用户方案、不计算、不写入', () => {

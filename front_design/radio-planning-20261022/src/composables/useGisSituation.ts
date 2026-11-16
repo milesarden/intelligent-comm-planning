@@ -1,5 +1,6 @@
 import { computed, onBeforeUnmount, ref, shallowRef } from 'vue';
 import example from '../config/gis-situation-example.json';
+import plainExample from '../config/gis-situation-example-plain.json';
 import exampleCoverage from '../config/gis-situation-coverage.json';
 import plainTerrain from '../assets/terrain/plain.json';
 import { env } from '../config/env';
@@ -48,40 +49,31 @@ function readExampleCoverage() {
       selectionHash: exampleCoverage.bandwidth_selection_hash },
   }, exampleCoverage.parameters);
 }
-// 示例在软件内随包交付；首次进入不读取资源工作区、不选择用户账号、不产生计算或数据库写入。
-export function gisExampleFrame(): GisSituationFrame {
-  const network = readGisNetwork(example.network, {
-    planId: example.network.identity.plan_id,
-    taskId: example.network.identity.task_id,
+// 本地态势先呈现，随后真实方案跟随独立核对，二者都不触发计算或写入。
+export function gisExampleFrame(plain = false): GisSituationFrame {
+  const source = plain ? plainExample : example;
+  const network = readGisNetwork(source.network, {
+    planId: source.network.identity.plan_id,
+    taskId: source.network.identity.task_id,
   });
+  const terrain = { ...source.terrain, bounds: [...source.terrain.bounds] as ResourceTerrain['bounds'] };
+  const [west, south, east, north] = terrain.bounds;
+  const [plainWest, plainSouth, plainEast, plainNorth] = plainTerrain.extent;
+  if (plain && (terrain.sourceSha256 !== plainTerrain.sourceSha256 ||
+    west > plainWest || south > plainSouth || east < plainEast || north < plainNorth)) {
+    throw new Error('平原默认态势与平原 DEM 范围或版本不匹配。');
+  }
   return {
     key: network.identity.snapshot_id,
-    label: example.label,
-    version: example.version,
+    label: source.label,
+    version: source.version,
     example: true,
     network,
-    terrain: { ...example.terrain, bounds: [...example.terrain.bounds] as [number, number, number, number] },
+    terrain,
     basemap: null,
-    coverage: readExampleCoverage(),
-    interferences: example.interferences.map(source => ({ ...source, origin: 'SOURCE', coordinate: [...source.coordinate] as [number, number] })),
-    notice: example.notice,
-  };
-}
-
-function initialFrame(plain: boolean): GisSituationFrame {
-  if (!plain) return gisExampleFrame();
-  return {
-    key: 'plain-terrain', label: '平原地形', version: '120 km × 120 km', example: false,
-    network: {
-      identity: { plan_id: 'PLAIN-TERRAIN', task_id: 'PLAIN-TERRAIN', snapshot_id: 'PLAIN-TERRAIN',
-        input_version: '', condition_version: '', resource_revision: '', state: 'REFERENCE',
-        source_changed: false, data_origin: 'SYNTHETIC_INTEGRATION', source: 'SR4' },
-      nodes: [], devices: [], links: [], demands: [], routes: [], paths_state: 'missing', paths_message: '',
-    },
-    terrain: { source: plainTerrain.source, sourceSha256: plainTerrain.sourceSha256,
-      bounds: [...plainTerrain.extent] as ResourceTerrain['bounds'] },
-    basemap: null, coverage: null, interferences: [],
-    notice: '请进入网络规划载入平原任务例程。方案转正后可在本页查看站点和规划链路。',
+    coverage: plain ? null : readExampleCoverage(),
+    interferences: source.interferences.map(row => ({ ...row, origin: 'SOURCE', coordinate: [...row.coordinate] as [number, number] })),
+    notice: source.notice,
   };
 }
 
@@ -96,7 +88,8 @@ function planNotice(network: GisNetwork, state: PlanningPlanSummary['state'], so
 
 // 新帧的网络、地形和覆盖只在核对完毕后一起发布；失败及迟到响应均不清空已显示的帧。
 export function createGisSituation(services?: GisSituationServices, plain = false) {
-  const frame = shallowRef<GisSituationFrame>(initialFrame(plain));
+  const frame = shallowRef<GisSituationFrame>(gisExampleFrame(plain));
+  const exampleModels = (plain ? plainExample : example).models;
   const catalog = shallowRef<ApiPage<PlanningPlanSummary> | null>(null);
   const busy = ref(false), listing = ref(false), error = ref(''), notice = ref(''), catalogError = ref('');
   const selectedDeviceId = ref(''), coverageDisplay = ref<'strength' | 'field' | 'boundary'>('strength');
@@ -135,19 +128,11 @@ export function createGisSituation(services?: GisSituationServices, plain = fals
     const token = begin(), initial = frame.value;
     let basemap: TerrainBasemap | undefined;
     try {
-      let terrain = initial.terrain;
-      if (plain) {
-        const context = await services?.resources?.loadResourceReadContext({ context: 'gis', signal: token.controller.signal });
-        if (!token.valid()) return;
-        if (context?.terrain?.sourceSha256 !== plainTerrain.sourceSha256) throw new Error('平原 DEM 版本不匹配。');
-        terrain = context.terrain;
-      }
-      basemap = await terrainLoader(terrain, globalThis.fetch, import.meta.env.BASE_URL, token.controller.signal);
+      basemap = await terrainLoader(initial.terrain, globalThis.fetch, import.meta.env.BASE_URL, token.controller.signal);
       if (!token.valid()) { basemap.dispose(); return; }
-      replace({ ...initial, terrain, basemap });
+      replace({ ...initial, basemap });
     } catch (reason) {
-      if (token.valid()) error.value = plain ? `平原地形加载失败。${reasonText(reason)}`
-        : `示例地形尚未显示：${reasonText(reason)}。示例点线已保留。`;
+      if (token.valid()) error.value = `示例地形尚未显示：${reasonText(reason)}。示例点线已保留。`;
     } finally { if (token.valid()) busy.value = false; }
   }
   async function readPlan(row: PlanningPlanSummary, token: ReturnType<typeof begin>) {
@@ -299,14 +284,13 @@ export function createGisSituation(services?: GisSituationServices, plain = fals
     } finally { if (alive && owner === listSerial) listing.value = false; }
   }
   async function showExample() {
-    if (plain) return;
     pauseFollowing();
-    const token = begin(), example = gisExampleFrame();
+    const token = begin(), next = gisExampleFrame(plain);
     let basemap: TerrainBasemap | undefined;
     try {
-      basemap = await terrainLoader(example.terrain, globalThis.fetch, import.meta.env.BASE_URL, token.controller.signal);
+      basemap = await terrainLoader(next.terrain, globalThis.fetch, import.meta.env.BASE_URL, token.controller.signal);
       if (!token.valid()) { basemap.dispose(); return; }
-      replace({ ...example, basemap }); useLiveInterferences.value = false; loadedPlanSignature = '';
+      replace({ ...next, basemap }); useLiveInterferences.value = false; loadedPlanSignature = '';
     } catch (reason) { if (token.valid()) error.value = `${reasonText(reason)}。当前态势已保留。`; }
     finally { if (token.valid()) busy.value = false; }
   }
@@ -329,7 +313,7 @@ export function createGisSituation(services?: GisSituationServices, plain = fals
     alive = false; serial++; listSerial++; read?.abort(); listRead?.abort();
     frame.value.basemap?.dispose(); busy.value = false; listing.value = false;
   }
-  return { frame, catalog, busy, listing, error, notice, catalogError, selectedDeviceId, coverageDisplay,
+  return { frame, exampleModels, catalog, busy, listing, error, notice, catalogError, selectedDeviceId, coverageDisplay,
     autoFollow, canAutoFollow, lastCheckedAt, liveInterferences, interferences, displayingLiveInterferences, interferenceSourceLabel, interferenceSourceDetails,
     startAutoRefresh, setAutoFollow,
     showCoverage, showLinks, coverage, initialize, openPlan, refreshLatest, queryPlans, showExample, previewDevices, stop };

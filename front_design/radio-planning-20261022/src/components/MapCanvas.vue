@@ -1010,7 +1010,7 @@ function updateFrozenCoverage(){
   const value=props.frozenCoverage,snapshot=props.frozenNetwork?.identity.snapshot_id??props.planningOverlay?.snapshotId,planId=props.frozenNetwork?.identity.plan_id;
   if(!value||!snapshot||fullScene.value){clearFrozenCoverage();return null;}
   if(!frozenCoverageRender||frozenCoverageRender.value!==value||frozenCoverageRender.snapshot!==snapshot||frozenCoverageRender.planId!==planId){
-    clearFrozenCoverage();frozenCoverageRender={value,snapshot,planId,layer:frozenCoverageLayer(value,snapshot,planId),deviceLayer:frozenCoverageDeviceLayer(value,snapshot,planId)};
+    clearFrozenCoverage();frozenCoverageRender={value,snapshot,planId,layer:frozenCoverageLayer(value,snapshot,planId),deviceLayer:frozenCoverageDeviceLayer(value,snapshot,planId,props.readonlySituation)};
   }
   return frozenCoverageRender.layer;
 }
@@ -1147,12 +1147,12 @@ function paint() {
       layers.push(layer);
     }
     else if (props.frozenNetwork) {
-      layers.push(gisPlanLayer(props.frozenNetwork, { node: props.selectedId, link: props.selectedLinkId, demand: props.selectedDemandId }, { linksVisible: props.showLinks, topologyOpacity: props.topologyOpacity }));
+      layers.push(gisPlanLayer(props.frozenNetwork, { node: props.selectedId, link: props.selectedLinkId, demand: props.selectedDemandId }, { linksVisible: props.showLinks, topologyOpacity: props.topologyOpacity, readonlySituation: props.readonlySituation }));
       statusDevices.update(props.frozenNetwork, props.frozenDeviceStatus);
       if (statusDevices.key()) layers.push(statusDevices.layer);
     }
     else layers.push(resourceReadLayer(props.resourceFrame, props.selectedId, props.resourceSelectedKind));
-    if(props.frozenNetwork&&props.showInterferences&&props.interferences.length)layers.push(interferenceLayer(props.interferences,props.selectedInterferenceId));
+    if(props.frozenNetwork&&props.showInterferences&&props.interferences.length)layers.push(interferenceLayer(props.interferences,props.selectedInterferenceId,props.readonlySituation));
     if (props.planningOverlay)
       layers.push(
         planningApiLayer(props.planningOverlay, props.selectedId, props.selectedLinkId, [
@@ -1410,7 +1410,17 @@ function fitDeviceCoverage(snapshotId: string) {
     );
 }
 function fit() {
-  if(map&&props.readonlySituation){map.getView().fit(situationAreaExtent(),{padding:[24,24,24,24]});return;}
+  if (map && props.readonlySituation) {
+    const size = map.getSize();
+    if (!size || size.some(length => length <= 0)) return;
+    const [width, height] = size;
+    const side = Math.min(52, width / 8);
+    map.getView().fit(situationAreaExtent(), {
+      size,
+      padding: [Math.min(32, height / 8), side, Math.min(54, height / 6), side],
+    });
+    return;
+  }
   if(map&&props.frozenCoverage){
     const layer=updateFrozenCoverage(),source=layer?.getSource(),extent=source?.getExtent();
     if(source?.getFeatures().length&&extent&&extent.every(Number.isFinite)){
@@ -1537,7 +1547,7 @@ onMounted(() => {
     updateHttpCoverage();
   });
   paint();
-  fit();
+  if (!props.readonlySituation) fit();
   map.on('pointermove', (event) => moveHoverPreview(event.pixel, event.dragging));
   map.on('movestart', clearHoverPreview);
   map.on('pointerdrag', clearHoverPreview);
@@ -1722,13 +1732,16 @@ onMounted(() => {
     if (!element || element.clientWidth <= 0 || element.clientHeight <= 0) return;
     const size = `${element.clientWidth}:${element.clientHeight}`;
     if (size === lastSize) return;
+    const firstSize = !lastSize;
     lastSize = size;
     // 过滤同尺寸通知并合并一帧内多次变更，不在尺寸观察回调中同步改变布局。
     if (resizeFrame !== undefined) return;
     resizeFrame = requestAnimationFrame(() => {
       resizeFrame = undefined;
       if (!hoverAlive) return;
-      clearHoverPreview(); map?.updateSize();
+      clearHoverPreview();
+      map?.updateSize();
+      if (firstSize && props.readonlySituation) fit();
     });
   });
   observer.observe(host.value!);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { Style } from 'ol/style';
 import { gisPlanLayer } from '../src/maps/gis-plan-layers';
 import type { GisNetwork } from '../src/types/gis-plan';
 function sample(): GisNetwork {
@@ -85,6 +86,29 @@ describe('GIS冻结图层', () => {
         'frozen-plan-node',
         'frozen-plan-node',
       ]);
+    }
+  });
+  it('只读态势密集点位保留可命中图标，12px 标签参与避让，放大后再显示站名', () => {
+    const input = sample();
+    input.nodes[1].coordinate = [...input.nodes[0].coordinate];
+    input.devices = input.nodes.map(node => ({ id: `D-${node.id}`, station_id: node.id,
+      model_id: 'MODEL', device_class: 'HF', frequency_khz: null, tx_power_dbm: null,
+      antenna_height_m: null }));
+    const layer = gisPlanLayer(input, {}, { readonlySituation: true });
+    expect((layer as unknown as { getDeclutter(): string }).getDeclutter()).toBe('gis-situation-captions');
+    const stations = layer.getSource()!.getFeatures().filter(feature => feature.get('kind') === 'frozen-plan-node');
+    expect(stations.map(feature => feature.get('objectId'))).toEqual(['A', 'B']);
+    for (const feature of stations) {
+      const style = feature.getStyleFunction()!;
+      const wide = style(feature, 160) as Style[], close = style(feature, 40) as Style[];
+      expect(wide[0].getImage()!.getDeclutterMode()).toBe('none');
+      expect(close[0]).toBe(wide[0]);
+      expect(wide.slice(1).map(row => row.getText()!.getText())).toEqual(['HF 1']);
+      expect(close.slice(1).map(row => row.getText()!.getText())).toEqual(['HF 1', feature.get('objectId')]);
+      for (const label of close.slice(1)) {
+        expect(label.getText()!.getDeclutterMode()).toBe('declutter');
+        expect(label.getText()!.getFont()).toMatch(/^12px /);
+      }
     }
   });
 });

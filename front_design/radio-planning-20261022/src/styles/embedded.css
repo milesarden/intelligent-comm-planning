@@ -382,7 +382,7 @@ body.agent-embed-mode :is(.agent-embed, .p-dialog, .p-drawer) .bandwidth-editor 
   color-scheme: light;
 }
 .agent-embed .embed-content .map-wrap { background: #e8eef5; }
-.agent-embed .embed-content :is(.map-caption span:last-child, .source-badge > span:last-child) { color: #60738a; }
+.agent-embed .embed-content :is(.map-caption span:last-child, .source-copy > span) { color: #60738a; }
 .agent-embed .embed-content .interference-source-badge { color: #805813; background: #fff8eaf2; border-color: #e5d2a6; }
 .agent-embed .embed-content .map-notice { color: #355f96; background: #edf4fff2; border-color: #c8dcf8; }
 .agent-embed .embed-content .map-notice.error { color: #9c3541; background: #fff1f2f2; border-color: #efc9ce; }
@@ -391,6 +391,7 @@ body.agent-embed-mode :is(.agent-embed, .p-dialog, .p-drawer) .bandwidth-editor 
 .agent-embed .embed-content .map-error { background: #fff8eb; }
 .agent-embed .embed-content .progress-details > summary { color: #52677f; background: #f7f9fc; border-color: #dce4ef; }
 .agent-embed .embed-content :is(.embedded-map-settings h2, .situation-coverage-legend strong) { color: #24354b; }
+.agent-embed .embed-content .embedded-map-settings { background: #fff; }
 .agent-embed .embed-content .embedded-map-settings > summary { padding: 8px 12px; font-size: var(--font-control); }
 .agent-embed .embed-content .embedded-map-settings .situation-controls { gap: 10px; }
 .agent-embed .embed-content .embedded-map-settings :is(label, .source-note, .frame-label span) { color: #52677f; }

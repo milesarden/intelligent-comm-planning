@@ -18,18 +18,24 @@
       :show-roads="false"
       @hover-frozen-devices="model.previewDevices"
     />
-    <div class="source-badge" :class="{ example: frame.example }" aria-live="polite">
-      <span class="source-dot" />
-      <strong>{{ frame.label }}</strong>
-      <span>{{ frame.example ? '内置示例 · 非实测' : frame.version + (frame.key === 'plain-terrain' ? '' : ' · 算法预测') }}</span>
+    <div class="situation-topbar">
+      <div class="situation-messages">
+        <div class="source-badge" :class="{ example: frame.example }" aria-live="polite">
+          <span class="source-dot" />
+          <div class="source-copy">
+            <strong>{{ frame.label }}</strong>
+            <span>{{ frame.example ? '内置示例 · 非实测' : frame.version + ' · 算法预测' }}</span>
+          </div>
+        </div>
+        <p v-if="model.displayingLiveInterferences" class="interference-source-badge">干扰源已更新；规划链路仍为原计算结果</p>
+        <span v-if="model.busy" class="read-status" role="status">正在核对态势来源…</span>
+      </div>
+      <details v-if="embeddedModule" class="embedded-map-settings">
+        <summary>显示设置</summary>
+        <div ref="embeddedControlsTarget" />
+      </details>
     </div>
-    <p v-if="model.displayingLiveInterferences" class="interference-source-badge">干扰源已更新；规划链路仍为原计算结果</p>
-    <span v-if="model.busy" class="read-status" role="status">正在核对态势来源…</span>
     <SituationCoverageLegend v-if="model.coverage" class="coverage-legend-position" :overlay="model.coverage" />
-    <details v-if="embeddedModule" class="embedded-map-settings">
-      <summary>显示设置</summary>
-      <div ref="embeddedControlsTarget" />
-    </details>
     <Teleport v-if="controlsTarget" :to="controlsTarget">
       <section class="situation-controls" aria-label="GIS 态势显示设置">
         <h2>态势显示</h2>
@@ -46,7 +52,7 @@
         <p class="source-note">{{ frame.notice }}</p>
         <p class="source-note">{{ model.interferenceSourceLabel }}</p>
         <details class="source-note"><summary>来源详情</summary><p>{{ model.interferenceSourceDetails }}</p></details>
-        <button v-if="!plainWorkspace" class="btn small" :disabled="model.busy" @click="model.showExample">查看内置受控示例</button>
+        <button class="btn small" :disabled="model.busy" @click="model.showExample">查看内置受控示例</button>
         <div class="layer-options">
           <label><input v-model="model.showLinks" type="checkbox" />规划链路</label>
           <label><input v-model="model.showCoverage" type="checkbox" :disabled="!coverageDevices.length" />设备覆盖</label>
@@ -71,7 +77,7 @@
           <button v-for="plan in model.catalog?.items ?? []" :key="plan.id" class="plan-option" :disabled="model.busy" @click="model.openPlan(plan)">
             <strong>{{ plan.name }} · {{ plan.version }}</strong><span>{{ stateLabels[plan.state] }} · {{ plan.savedAt }}</span>
           </button>
-          <p v-if="model.catalog?.total === 0">{{ plainWorkspace ? '暂无已保存方案。' : '暂无已保存方案，内置示例仍可查看。' }}</p>
+          <p v-if="model.catalog?.total === 0">暂无已保存方案，内置示例仍可查看。</p>
           <div v-if="model.catalog" class="control-actions">
             <button class="btn small" :disabled="model.listing || model.catalog.pageNum <= 1" @click="model.queryPlans(model.catalog.pageNum - 1)">上一页</button>
             <span>第 {{ model.catalog.pageNum }} 页</span>
@@ -103,7 +109,7 @@ import { computed, inject, onBeforeUnmount, onMounted, reactive, ref, type Ref }
 import MapCanvas from '../components/MapCanvas.vue';
 import PlainTerrainMap from '../components/PlainTerrainMap.vue';
 import SituationCoverageLegend from '../components/SituationCoverageLegend.vue';
-import { gisExampleMetadata, useGisSituation } from '../composables/useGisSituation';
+import { useGisSituation } from '../composables/useGisSituation';
 import { env } from '../config/env';
 const menuTarget = inject<Ref<HTMLElement | null>>('applicationMenuTarget', ref(null));
 const embeddedModule = inject('embeddedModule', false);
@@ -116,7 +122,7 @@ const plainWorkspace = env.plainTerrain;
 const frame = computed(() => model.frame);
 const hoverContext = computed(() => ({ key: frame.value.key + ':' + (model.displayingLiveInterferences ? model.liveInterferences?.revision : 'frozen'),
   source: '节点/设备：' + (frame.value.example ? '内置示例 · 冻结规划参数 · 非实测' : '已保存冻结规划参数 · 非实测') + '；' + model.interferenceSourceLabel,
-  models: frame.value.example ? gisExampleMetadata.models : [] }));
+  models: frame.value.example ? model.exampleModels : [] }));
 const lastCheckedTime = computed(() => model.lastCheckedAt ? new Date(model.lastCheckedAt).toLocaleTimeString('zh-CN', { hour12: false }) : '');
 function changeAutoFollow(event: Event) { model.setAutoFollow((event.target as HTMLInputElement).checked); }
 const coverageDevices = computed(() => frame.value.coverage?.result?.devices.filter(device => device.status === 'COMPLETE') ?? []);
@@ -180,20 +186,49 @@ onMounted(async () => {
   font: inherit;
   color-scheme: dark;
 }
-.embedded-map-settings { position:absolute; top:16px; right:16px; z-index:35; width:min(340px, calc(100% - 32px)); color:#dce7f5; border:1px solid #386179; border-radius:7px; background:#0c1d2ff2; box-shadow:0 8px 24px #0004; }
-.embedded-map-settings > summary { cursor:pointer; padding:11px 14px; font-weight:600; }
-.embedded-map-settings[open] { max-height:calc(100% - 32px); overflow:auto; }
+.situation-topbar {
+  position: absolute;
+  inset: 16px 16px auto 76px;
+  z-index: 35;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  pointer-events: none;
+}
+.situation-messages { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.embedded-map-settings {
+  justify-self: end;
+  box-sizing: border-box;
+  width: max-content;
+  color: #dce7f5;
+  border: 1px solid #386179;
+  border-radius: 7px;
+  background: #0c1d2f;
+  box-shadow: 0 8px 24px #0004;
+  pointer-events: auto;
+}
+.embedded-map-settings > summary { cursor: pointer; padding: 9px 12px; font-size: var(--font-control); font-weight: 600; }
+.embedded-map-settings[open] { width: min(340px, 45vw); max-height: calc(100dvh - 100px); overflow: auto; }
 .embedded-map-settings .situation-controls { padding:0 14px 14px; margin:0; border:0; }
 .coverage-legend-position { position: absolute; right: 18px; bottom: 40px; max-width: min(310px, calc(100% - 36px)); }
-.source-badge { position: absolute; left: 76px; top: 20px; display: flex; gap: 9px; align-items: center; max-width: calc(100% - 105px); padding: 9px 12px; border: 1px solid #386179; border-radius: 7px; background: #091b2bdd; color: #c7e0ee; font-size: var(--font-secondary); pointer-events: none; }
-.source-badge strong { font-size: var(--font-control); white-space: nowrap; }
-.source-badge > span:last-child { color: #9bb7c9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.source-dot { width: 6px; height: 6px; border-radius: 50%; background: #6acebb; }
-.interference-source-badge { position: absolute; left: 76px; top: 59px; max-width: calc(100% - 105px); margin: 0; padding: 6px 10px; border: 1px solid #79643d; border-radius: 6px; background: #142332ed; color: #e4c88e; font-size: var(--font-caption); line-height: 1.7; pointer-events: none; }
+.source-badge, .interference-source-badge, .read-status {
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--font-control);
+  line-height: 1.45;
+}
+.source-badge { display: flex; gap: 8px; align-items: flex-start; padding: 8px 11px; border: 1px solid #386179; border-radius: 7px; background: #091b2bf2; color: #c7e0ee; }
+.source-copy { display: flex; flex-wrap: wrap; gap: 2px 9px; min-width: 0; }
+.source-copy > span { color: #afc8d9; }
+.source-dot { flex: 0 0 6px; height: 6px; margin-top: .5em; border-radius: 50%; background: #6acebb; }
+.interference-source-badge { padding: 5px 9px; border: 1px solid #79643d; border-radius: 6px; background: #142332ed; color: #e4c88e; }
 .example .source-dot { background: #ecc582; }
 .map-notice { margin: 0; padding: 9px 12px; border: 1px solid #416176; border-radius: 6px; background: #0b2032ed; color: #c7dfef; font-size: var(--font-control); line-height: 1.7; }
 .map-notice.error { border-color: #876745; color: #efc68f; }
-.read-status { position: absolute; right: 18px; top: 20px; padding: 9px 12px; border-radius: 6px; background: #0b2032ed; color: #b4d8f0; font-size: var(--font-control); pointer-events: none; }
+.read-status { padding: 5px 9px; border-radius: 6px; background: #0b2032ed; color: #b4d8f0; }
 .situation-controls { display: grid; gap: 12px; border-top: 1px solid #2f455b; padding-top: 14px; margin-top: 14px; font-size: var(--font-control); }
 h2 { margin: 0; color: #e2eff8; font-size: 14px; }
 .control-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -209,5 +244,11 @@ label { display: grid; gap: 6px; min-width: 0; color: #bed4e3; }
 .plan-option { width: 100%; display: grid; text-align: left; gap: 5px; background: #142d40; border: 1px solid #2d4c62; border-radius: 5px; padding: 9px; color: #c9e0ee; margin: 6px 0; cursor: pointer; }
 .plan-option span { color: #98b6c9; font-size: var(--font-caption); }
 .plan-option:hover { border-color: #6ca5c5; }
-@media (max-width: 650px) { .source-badge { left: 66px; top: 18px; } .source-badge > span:last-child { display: none; } .read-status { top: 70px; } }
+@media (max-width: 650px) {
+  .situation-topbar { inset: 12px 12px auto 64px; }
+  .embedded-map-settings[open] { grid-column: 1 / -1; width: min(340px, 100%); max-height: max(96px, calc(100dvh - 170px)); }
+}
+@media (max-width: 420px) {
+  .situation-topbar { grid-template-columns: minmax(0, 1fr); }
+}
 </style>
