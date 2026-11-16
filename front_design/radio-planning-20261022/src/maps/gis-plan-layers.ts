@@ -7,13 +7,13 @@ import { Circle, Fill, Stroke, Style, Text } from 'ol/style';
 import type { GisNetwork } from '../types/gis-plan';
 import { projectCoordinate } from './layers';
 import { LINK_STATUS_STYLES } from '../config/link-status';
-import { gisNodeSymbol, gisSymbol } from './gis-symbols';
+import { GIS_SITUATION_LABELS, gisNodeSymbol, gisSymbol } from './gis-symbols';
 
 // 冻结计划使用独立要素身份，点击不能落到当前资源同名对象。
 export function gisPlanLayer(
   network: GisNetwork,
   selected: { node?: string; link?: string; demand?: string } = {},
-  display: { linksVisible?: boolean; topologyOpacity?: number } = {},
+  display: { linksVisible?: boolean; topologyOpacity?: number; readonlySituation?: boolean } = {},
 ) {
   const positions = new Map(network.nodes.map((node) => [node.id, node.coordinate]));
   const features: Feature[] = [],
@@ -90,22 +90,44 @@ export function gisPlanLayer(
       objectId: node.id,
       snapshot,
     });
-    feature.setStyle(
-      new Style({
-        image: gisSymbol(gisNodeSymbol(node),active,color),
-        text: active
-          ? new Text({
-              text: node.name,
-              offsetY: -18,
-              fill: new Fill({ color: '#fff' }),
-              stroke: new Stroke({ color: '#152d40', width: 3 }),
-            })
-          : undefined,
-      }),
-    );
-    const devices=network.devices.filter(device=>device.station_id===node.id),hf=devices.filter(device=>device.device_class==='HF').length,vu=devices.length-hf;
-    if(devices.length)feature.setStyle([...(Array.isArray(feature.getStyle())?feature.getStyle() as Style[]:[feature.getStyle() as Style]),new Style({text:new Text({text:`HF ${hf} · VUHF ${vu}`,offsetY:23,font:'10px Microsoft YaHei',fill:new Fill({color:'#d6e9f4'}),backgroundFill:new Fill({color:'#102638d9'}),padding:[2,4,2,4]})})]);
+    const image = gisSymbol(gisNodeSymbol(node), active, color);
+    const devices = network.devices.filter(device => device.station_id === node.id);
+    const hf = devices.filter(device => device.device_class === 'HF').length;
+    const vu = devices.length - hf;
+    const situation = display.readonlySituation;
+    const name = active || situation ? new Text({
+      text: node.name,
+      offsetY: situation ? -20 : -18,
+      font: situation ? GIS_SITUATION_LABELS.font : undefined,
+      declutterMode: situation ? 'declutter' : undefined,
+      fill: new Fill({ color: '#fff' }),
+      stroke: new Stroke({ color: '#152d40', width: 3 }),
+      padding: situation ? [2, 4, 2, 4] : undefined,
+    }) : undefined;
+    const bands = situation ? [hf ? `HF ${hf}` : '', vu ? `VUHF ${vu}` : ''].filter(Boolean).join(' · ')
+      : `HF ${hf} · VUHF ${vu}`;
+    const count = devices.length ? new Style({ text: new Text({
+      text: bands,
+      offsetY: 23,
+      font: situation ? GIS_SITUATION_LABELS.font : '10px Microsoft YaHei',
+      declutterMode: situation ? 'declutter' : undefined,
+      fill: new Fill({ color: '#d6e9f4' }),
+      backgroundFill: new Fill({ color: '#102638d9' }),
+      padding: [2, 4, 2, 4],
+    }) }) : undefined;
+    if (situation) {
+      // 站点实体始终可见且可命中，避让只作用于数量和名称。
+      const overview = [new Style({ image })];
+      if (count) overview.push(count);
+      const detail = [...overview, new Style({ text: name, zIndex: active ? 2 : 1 })];
+      feature.setStyle((_feature, resolution) => active || resolution <= GIS_SITUATION_LABELS.detailResolution
+        ? detail : overview);
+    } else {
+      const station = new Style({ image, text: name });
+      feature.setStyle(count ? [station, count] : station);
+    }
     features.push(feature);
   }
-  return new VectorLayer({ source: new VectorSource({ features }), zIndex: 45, declutter:'frozen-plan-captions' });
+  return new VectorLayer({ source: new VectorSource({ features }), zIndex: 45,
+    declutter: display.readonlySituation ? GIS_SITUATION_LABELS.group : 'frozen-plan-captions' });
 }

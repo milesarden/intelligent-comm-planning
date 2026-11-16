@@ -18,9 +18,11 @@ import VectorLayer from 'ol/layer/Vector';
 const maps=vi.hoisted(()=>({values:[] as any[]}));
 // 仅隔离 DOM 画布，真实图层和 View 保留。
 vi.mock('ol/Map',()=>({default:class {
+  private readonly viewport = new EventTarget();
   layers:any[]=[];view:any;handlers=new Map<string,Function>();setLayers=vi.fn((layers:any[])=>this.layers=layers);dispose=vi.fn();
   constructor(options:any){this.view=options.view;vi.spyOn(this.view,'fit').mockImplementation(()=>{});maps.values.push(this);}
   getView(){return this.view;}getSize(){return[960,640];}updateSize(){}on(type:string,fn:Function){this.handlers.set(type,fn);}forEachFeatureAtPixel(){}
+  getViewport() { return this.viewport; }
   addLayer(layer:any){this.layers.push(layer);}removeLayer(layer:any){this.layers=this.layers.filter(value=>value!==layer);}
 }}));
 vi.mock('ol/control',()=>({defaults:()=>({extend:()=>[]}),ScaleLine:class{}}));

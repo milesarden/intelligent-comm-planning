@@ -37,7 +37,15 @@ vi.mock('../src/components/DeviceDetailTabs.vue',()=>({default:Vue.defineCompone
 vi.mock('../src/composables/useDeviceKnowledgeSummary',()=>({useDeviceKnowledgeSummary:()=>({summary:Vue.ref(null),status:Vue.ref('ready'),error:Vue.ref(''),retry:()=>{}})}));
 vi.mock('../src/components/AppTable.vue',()=>({default:Vue.defineComponent({props:['rows'],emits:['select'],setup:(p,{emit})=>()=>Vue.h('div',p.rows.map((row:any)=>Vue.h('button',{onClick:()=>emit('select',row)},row.id)))})}));
 vi.mock('../src/components/MapCanvas.vue',()=>({default:Vue.defineComponent({inheritAttrs:false,setup:(_p,{expose})=>{expose({locate:()=>{},locateResource:()=>{},fit:()=>{}});return()=>Vue.h('map-probe');}})}));
-vi.mock('../src/components/ResourceStatusPanel.vue',()=>({default:{inheritAttrs:false,render:()=>null}}));
+vi.mock('../src/components/ResourceStatusPanel.vue', () => ({
+  default: Vue.defineComponent({
+    inheritAttrs: false,
+    setup(_props, { expose }) {
+      expose({ requestLeave: async () => true, canRefreshDirectoryInBackground: () => false });
+      return () => null;
+    },
+  }),
+}));
 vi.mock('../src/components/ResourceLedgerFilters.vue',()=>({default:{inheritAttrs:false,render:()=>null}}));
 vi.mock('../src/components/DeviceNetworkPanel.vue',()=>({default:{inheritAttrs:false,render:()=>null}}));
 vi.mock('../src/components/StatusBadge.vue',()=>({default:{inheritAttrs:false,render:()=>null}}));

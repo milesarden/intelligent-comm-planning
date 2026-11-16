@@ -1,6 +1,7 @@
 import type { AuthenticatedRequest } from './auth-http';
 import type { PlanningApiServices } from '../types/planning-api';
 import { resolveAuthApiBaseUrl } from '../config/env';
+import { plainTerrainApiBase } from '../config/terrain-scenes';
 import { assertTaskOptions, apiId } from './task-api-validation';
 import { readCoverageRaster } from './coverage-validation';
 import { ApiError } from './types';
@@ -9,8 +10,11 @@ import { ApiError } from './types';
 export function coverageFilePath(value: string, baseUrl: string, origin = globalThis.location?.origin ?? 'http://same-origin.invalid'): string {
   const base = resolveAuthApiBaseUrl(baseUrl, origin);
   let url: URL; try { url = new URL(value, origin); } catch { throw new ApiError('覆盖图片地址无效', 'INVALID_COVERAGE_URL'); }
-  if (url.origin !== origin || url.username || url.password || url.search || url.hash || value.includes('\\') || /%(?:2e|2f|5c)/i.test(value) || !url.pathname.startsWith(base + '/files/') || !url.pathname.endsWith('.png')) throw new ApiError('覆盖图片必须位于同源 API 文件目录', 'INVALID_COVERAGE_URL');
-  return url.pathname.slice(base.length);
+  // 平原后端返回不带网关前缀的受控文件句柄；实际鉴权下载仍使用当前地形的 API。
+  const legacyBase = '/api/v1';
+  const handleBase = base === plainTerrainApiBase && value.startsWith(legacyBase + '/files/') ? legacyBase : base;
+  if (url.origin !== origin || url.username || url.password || url.search || url.hash || value.includes('\\') || /%(?:2e|2f|5c)/i.test(value) || !url.pathname.startsWith(handleBase + '/files/') || !url.pathname.endsWith('.png')) throw new ApiError('覆盖图片必须位于同源 API 文件目录', 'INVALID_COVERAGE_URL');
+  return url.pathname.slice(handleBase.length);
 }
 export function createCoverageHttp(request: AuthenticatedRequest, baseUrl: () => string): PlanningApiServices['getPlanningCoverageImage'] {
   return async input => {

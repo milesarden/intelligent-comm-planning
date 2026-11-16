@@ -55,8 +55,38 @@ async function interactive(loadContext: DeviceConfigurationClient['loadContext']
   app = renderer.createApp({ render: () => h(Drawer, { ...state, services, deviceId: 'D1', resourceRevision: revision, onClose: closed }) });
   app.use(pinia); app.provide(ssrContextKey, {}); app.mount(root);
   for (let i = 0; i < 10; i++) await nextTick();
-  return { state, services, closed, config: useDeviceConfigurationAcceptanceStore() };
+  return { state, services, closed, root, config: useDeviceConfigurationAcceptanceStore() };
 }
+it('marks out-of-range ledger values immediately and validates corrected input without changing the ledger snapshot', async () => {
+  const source = structuredClone(context);
+  source.device.source_values = { tx_power_dbm: 51.8, work_freq_khz: 32000 };
+  source.model.tx_power_max_dbm = 51.76;
+  const { config, root, services } = await interactive(async () => source);
+  const input = (label: string) => find(root, n => n.props['aria-label'] === label)!;
+  const validate = () => find(root, n => n.tag === 'button' && textOf(n) === '校验')!;
+
+  expect(config.power).toBe('51.8');
+  expect(config.frequency).toBe('32000');
+  expect(input('请求功率').props['aria-invalid']).toBe(true);
+  expect(input('请求频率').props['aria-invalid']).toBe(true);
+  expect(textOf(root)).toContain('请求功率超过型号上限 51.76 dBm');
+  expect(textOf(root)).toContain('请求频率超出型号支持范围');
+  expect(validate().props.disabled).toBe(true);
+  await config.validate();
+  expect(services.validateRequest).not.toHaveBeenCalled();
+
+  config.power = '51.76';
+  config.frequency = '30000';
+  await nextTick();
+  expect(input('请求功率').props['aria-invalid']).toBe(false);
+  expect(input('请求频率').props['aria-invalid']).toBe(false);
+  expect(validate().props.disabled).toBe(false);
+  await config.validate();
+  expect(services.validateRequest).toHaveBeenCalledWith(expect.objectContaining({
+    values: { tx_power_dbm: 51.76, work_freq_khz: 30000 },
+  }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  expect(config.data?.device.source_values).toEqual({ tx_power_dbm: 51.8, work_freq_khz: 32000 });
+});
 it('does not cancel a busy read before checking a parent visible=false request', async () => {
   let done!: (value: ConfigurationAcceptanceContext) => void;
   const s = await interactive(() => new Promise<ConfigurationAcceptanceContext>(resolve => { done = resolve; }));

@@ -1,8 +1,9 @@
 import { ApiError } from './types';
 import { configurationRequestInput, type ConfigurationSubmissionInput } from './device-configuration-decode';
+import { terrainStorageKey } from './terrain-storage';
 
 export type PendingStorage = Pick<Storage, 'getItem' | 'setItem'>;
-const key = (account: string) => 'device-configuration-pending-a1:' + encodeURIComponent(account);
+const key = (account: string) => terrainStorageKey('device-configuration-pending-a1:' + encodeURIComponent(account));
 const fail = (): never => { throw new ApiError('待核实请求存储不可用或已损坏，请保留原记录', 'PENDING_STORAGE_ERROR'); };
 function storage(value?: PendingStorage): PendingStorage {
   if (value) return value;

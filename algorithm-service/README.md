@@ -31,6 +31,14 @@ python -m alembic -c algorithm-service/alembic.ini current
 
 源码启动前需配置已存在且完成迁移、初始化的数据库，以及所用认证模式、允许同源地址和隔离运行目录。当前本地账号模式为 `LOCAL_PASSWORD`；`INTEGRATION` 仅用于显式构造联调。
 
+### 源码运行双地形场景
+
+在前端目录设置 `VITE_UNIFIED_TERRAIN=1`，清除 `VITE_TERRAIN_SCENE` 和 `VITE_API_BASE_URL`，执行 `npm run build -- --mode integration`。两种场景共用该前端产物。
+
+用已经配置平原地理数据、资源台账及独立运行目录的后端工作区，在回环地址启动平原服务，例如 `python -m uvicorn app.main:app --app-dir algorithm-service --host 127.0.0.1 --port 8002`。平原工作区使用自己的已迁移数据库。其身份配置须允许主程序的浏览器地址，例如 `http://127.0.0.1:5183`。地理数据和资源输入的离线准备程序为 `scripts/prepare_plain_geodata.py` 和 `scripts/build_plain_examples.py`。
+
+在丘陵工作区运行 `python scripts/serve_delivery.py --plain-api-port 8002`，打开 `http://127.0.0.1:5183/#/situation`，在「地形场景」中切换。平原独立入口为 `/scenes/plain/#/situation`，嵌入路径可用 `/scenes/plain/#/embed/situation`。仅启动一个场景时按原命令运行，无需设置双场景构建参数。
+
 内部验收入口要求显式传入 `--runtime-root`、`--database-url` 和 `--key-file`，复用所属实例的配置。便携实例与开发实例的数据独立，具体入口见[运行说明](../docs/design/交付运行入口说明.md)。
 
 ## 修改与验证

@@ -197,8 +197,12 @@ describe('登录能力稳定重读：真实登录与密码抽屉挂载', () => {
     const read = deferred<LocalIdentityCapabilities>(); probes.capabilities.mockReturnValueOnce(read.promise);
     auth.accept(identity('account-a', 'SYS-2')); await settle();
     expect(f.enter().props.disabled).toBe(true); expect(probes.capabilities).toHaveBeenCalledTimes(2);
-    read.resolve(capabilities()); await settle(); auth.generation++; await settle();
-    expect(probes.capabilities).toHaveBeenCalledTimes(3); expect(f.enter().props.disabled).toBe(false);
+    read.resolve(capabilities()); await settle();
+    probes.capabilities.mockResolvedValueOnce(capabilities(true));
+    auth.generation++; await settle();
+    expect(probes.capabilities).toHaveBeenCalledTimes(3);
+    expect(f.drawer()).toBeDefined();
+    expect(f.enter().props.disabled).toBe(true);
   });
 
   it('卸载即Abort，迟到成功和后续身份/busy变化不能重开读取', async () => {

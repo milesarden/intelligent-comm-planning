@@ -475,4 +475,10 @@ def planning_preset_catalog() -> dict[str, Any]:
                 }],
             },
         })
+    example = REPO_ROOT / "data/synthetic/tasks/plain_start_example.json"
+    if example.is_file():
+        defaults = json.loads(example.read_text(encoding="utf-8"))
+        for item in items:
+            item["description"] = "平原场景短波与超短波规划例程"
+            item["defaults"].update(defaults, name=f"平原{item['label']}任务", presetId=item["id"])
     return _envelope({"revision": f"catalog-{resource_revision()}", "items": items})

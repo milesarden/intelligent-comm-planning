@@ -1,4 +1,9 @@
 import Icon from 'ol/style/Icon';
+export const GIS_SITUATION_LABELS = {
+  group: 'gis-situation-captions',
+  font: '12px "Microsoft YaHei", sans-serif',
+  detailResolution: 80,
+} as const;
 export type GisSymbol = 'fixed-station'|'communication-vehicle'|'manpack'|'radio'|'interference-source'|'node-generic';
 export function gisNodeSymbol(node: {mobility?:string|null;node_role?:string|null;node_subtype?:string|null}): GisSymbol {
   if(node.mobility==='VEHICLE')return 'communication-vehicle';

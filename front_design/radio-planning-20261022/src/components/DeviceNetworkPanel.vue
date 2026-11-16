@@ -8,7 +8,7 @@
       v-else-if="network?.state !== 'ready'"
       class="network-note"
       role="status"
-      >{{ network?.message || '暂无当前演示网络的关联资料' }}</p
+      >{{ network?.message || '暂无当前网络的关联资料' }}</p
     ><template v-else
       ><p class="network-note"
         >{{ network.title }} · {{ network.snapshotId }}<br />{{ network.source }}</p

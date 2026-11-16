@@ -661,7 +661,9 @@ async function frequencyChanged(value: FrequencyResourceChange) {
     ? '频点变更已保存，资源已重新读取。' : '频点变更已保存，资源刷新失败，请刷新资源。';
 }
 const leaveGuard = useResourceLedgerLeaveGuard(() => [
-  { dirty: () => statusDirty.value || !!statusSync.pendingImport, busy: () => statusBusy.value,
+  // 状态目录和批次只读请求由组件取消；选文件、导入与待核实原号仍锁定离页。
+  { dirty: () => statusDirty.value || !!statusSync.pendingImport,
+    busy: () => statusPanel.value?.hasUnfinishedImport?.() ?? !!statusSync.pendingImport,
     leave: leaveStatusInputs },
   { dirty: () => configuration.dirty || !!configuration.pending, busy: () => configuration.busy,
     leave: leaveConfiguration },

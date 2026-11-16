@@ -11,17 +11,17 @@
     <div class="toolbar"
       ><button
         class="btn small"
-        :disabled="!task.editable"
+        :disabled="!ready"
         @click="template('xlsx')"
         >XLSX 模板</button
       ><button
         class="btn small"
-        :disabled="!task.editable"
+        :disabled="!ready"
         @click="template('csv', 'task_scenarios')"
         >任务 CSV 模板</button
       ><button
         class="btn small"
-        :disabled="!task.editable"
+        :disabled="!ready"
         @click="template('csv', 'task_links')"
         >需求 CSV 模板</button
       ></div
@@ -31,9 +31,10 @@
         type="file"
         accept=".csv,.xlsx"
         multiple
-        :disabled="!task.editable || reading || task.importBusy"
+        :disabled="!ready || reading || task.importBusy"
         @change="choose"
     /></label>
+    <p v-if="!task.draft || task.loading" role="status">正在准备任务资料…</p>
     <p>{{ task.importFiles.map((f) => f.name).join(' / ') }}</p
     ><p
       v-if="reading || task.importBusy"
@@ -46,7 +47,7 @@
       >{{ fileError || task.error }}</p
     ><button
       class="btn"
-      :disabled="!task.editable || !task.importFiles.length || reading || task.importBusy"
+      :disabled="!ready || !task.importFiles.length || reading || task.importBusy"
       @click="task.previewImport(task.importFiles)"
       >解析并校验</button
     >
@@ -121,7 +122,7 @@
 import { uiField } from '../services/ui-copy';
 import ReadableData from './ReadableData.vue';
 // 文件预览、应用到草稿和保存任务是三个独立动作。
-import { ref, toRaw } from 'vue';
+import { computed, ref, toRaw } from 'vue';
 import TaskQuickStart from './TaskQuickStart.vue';
 import PlanningOptionsSummary from './PlanningOptionsSummary.vue';
 import AppDrawer from './AppDrawer.vue';
@@ -136,6 +137,7 @@ const task = useTaskInputStore(),
   auth = useAuthStore(),
   fileError = ref(''),
   reading = ref(false);
+const ready = computed(() => task.editable && !task.loading && !!task.draft && !!task.resourceRevision);
 async function choose(event: Event) {
   const files = Array.from((event.target as HTMLInputElement).files ?? []);
   fileError.value = '';

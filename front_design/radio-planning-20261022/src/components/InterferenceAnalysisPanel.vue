@@ -62,6 +62,8 @@
         <button v-if="['PENDING', 'RUNNING'].includes(store.selected.state)" class="btn" :disabled="!store.executable || store.locked" @click="store.cancelAnalysis()"><i class="pi pi-stop" aria-hidden="true" /> 请求取消分析</button>
         <p v-if="store.selected.state === 'CANCEL_REQUESTED'" role="status">取消已请求，等待算法检查点确认。</p>
         <template v-if="store.selected.result">
+          <button v-if="store.selected.state === 'SUCCESS'" class="btn small" @click="exportAnalysis">导出分析结果与措施</button>
+          <p v-if="exportError" role="alert">{{ exportError }}</p>
           <div class="toolbar" role="group" aria-label="影响状态"><button class="btn small" :aria-pressed="!store.effectiveAfter" @click="store.after = false">措施前</button><button class="btn small" :aria-pressed="store.effectiveAfter" :disabled="!store.canPreviewAfter" @click="store.after = true">措施后预测</button></div>
           <p v-if="store.impact">预测受扰节点 {{ store.impact.summary.affected_nodes }} · 链路 {{ store.impact.summary.affected_links }}</p>
           <fieldset class="levels"><legend>受扰等级</legend><label v-for="(label, key) in levelNames" :key="key"><input v-model="store.levels" type="checkbox" :value="key" />{{ label }}</label></fieldset>
@@ -91,8 +93,9 @@
 <script setup lang="ts">
 import { uiCode } from '../services/ui-copy';
 import ReadableData from './ReadableData.vue';
-import { computed, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useInterferenceStore } from '../stores/interference';
+import { downloadFile } from '../services/file-download';
 import InterferenceSceneDrawer from './InterferenceSceneDrawer.vue';
 import type { InterferenceSource } from '../types/domain';
 import type { InterferenceTargetEntry } from '../composables/useInterferenceTargetNavigation';
@@ -102,6 +105,47 @@ const props = defineProps<{ source?: InterferenceSource; sourceEditable: boolean
   measureTargets?: InterferenceTargetEntry[]; targetNotice?: string; taskContext?: TaskContext | null }>();
 const emit = defineEmits<{ selectSource: [id: string]; editSource: [id: string]; analyzeSource: [id: string]; selectNode: [id: string]; selectLink: [id: string] }>();
 const store = useInterferenceStore();
+const exportError = ref('');
+watch(() => store.selected?.run_id, () => { exportError.value = ''; });
+
+function exportAnalysis() {
+  const run = store.selected;
+  if (!store.readable || run?.state !== 'SUCCESS' || !run.result) return;
+  exportError.value = '';
+  const archive = {
+    schema_version: 1,
+    result_type: '模型预测',
+    run_id: run.run_id,
+    run_version: run.run_version,
+    task_id: run.task_id,
+    plan_id: run.plan_id,
+    plan_version: run.plan_version,
+    scene_id: run.scene_id,
+    scene_version_id: run.scene_version_id,
+    scene_name: run.source.name,
+    scene_version: run.source.versionNo,
+    data_origin: run.data_origin,
+    resource_revision: run.resource_revision,
+    source_hash: run.source_hash,
+    result_hash: run.result_hash,
+    started_at: run.started_at,
+    updated_at: run.updated_at,
+    interference_sources: run.source.interferenceSources,
+    analysis_parameters: run.analysis_parameters ?? null,
+    result: run.result,
+  };
+  const fileId = run.run_id.replace(/[^a-zA-Z0-9_-]/g, '-');
+  try {
+    downloadFile({
+      name: `干扰分析-${fileId}.json`,
+      mime: 'application/json',
+      bytes: new TextEncoder().encode(JSON.stringify(archive, null, 2)),
+    }, 1000);
+  } catch {
+    exportError.value = '干扰分析结果导出失败，请重试。';
+  }
+}
+
 // 已有运行/场景只列其冻结选源；空选源不能回退成当前资源目录。
 const sourceRows = computed(() => store.selected ? store.selected.source.interferenceSources.map(row => row.sourceRow)
   : store.scene ? store.scene.version.interferenceSources.map(row => row.sourceRow) : store.context?.interference_sources ?? []);

@@ -203,9 +203,12 @@ function discardInput() {
   if (fileInput.value) fileInput.value.value = '';
   return true;
 }
+function hasUnfinishedImport() {
+  return fileBusy.value || !!status.pendingImport;
+}
 async function requestLeave(): Promise<boolean> {
   discardDirectoryRefresh();
-  if (fileBusy.value || status.pendingImport || dirtyInput.value) {
+  if (hasUnfinishedImport() || dirtyInput.value) {
     leaveNotice.value = '尚有文件读取、待核实原号或未提交导入输入，请先核实或明确放弃本地输入。'; return false;
   }
   // 没有导入输入或原号时，busy 只属于可取消的读取，不阻止打开其他详情。
@@ -213,7 +216,7 @@ async function requestLeave(): Promise<boolean> {
   leaveNotice.value = '';
   return true;
 }
-defineExpose({ requestLeave, canRefreshDirectoryInBackground, refreshDirectoryInBackground });
+defineExpose({ requestLeave, hasUnfinishedImport, canRefreshDirectoryInBackground, refreshDirectoryInBackground });
 onScopeDispose(() => { disposed = true; fileSerial++; discardDirectoryRefresh(); });
 </script>
 <style scoped>

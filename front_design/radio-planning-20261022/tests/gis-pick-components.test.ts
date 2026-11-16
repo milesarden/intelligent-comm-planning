@@ -25,6 +25,7 @@ const probes = vi.hoisted(() => ({ maps: [] as Probe[] }));
 // 仅替换需要 DOM 的地图外壳；实际 View、聚合源、投影、要素和 Vue 模板均运行。
 vi.mock('ol/Map', () => ({ default: class implements Probe {
   view: View; layers: BaseLayer[] = []; picked?: Feature;
+  viewport = new EventTarget();
   handlers = new Map<string, (event: MapEvent) => void>();
   setLayers = vi.fn((layers: BaseLayer[]) => { this.layers = layers; });
   dispose = vi.fn();
@@ -34,7 +35,8 @@ vi.mock('ol/Map', () => ({ default: class implements Probe {
     vi.spyOn(this.view, 'animate').mockImplementation(() => {});
     probes.maps.push(this);
   }
-  getView() { return this.view; } getSize() { return [960, 640]; } updateSize() {}
+  getView() { return this.view; } getViewport() { return this.viewport; }
+  getSize() { return [960, 640]; } updateSize() {}
   getPixelFromCoordinate(point: number[]) {
     const center = this.view.getCenter()!, resolution = this.view.getResolution()!;
     return [480 + (point[0]! - center[0]!) / resolution, 320 - (point[1]! - center[1]!) / resolution];

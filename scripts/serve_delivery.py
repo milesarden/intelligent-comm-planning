@@ -8,6 +8,11 @@ import sys
 
 from fastapi.staticfiles import StaticFiles
 
+if __package__:
+    from .plain_scene_api import API_PREFIX, PREFIX, PlainSceneApi
+else:
+    from plain_scene_api import API_PREFIX, PREFIX, PlainSceneApi
+
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_DIST = ROOT / "front_design" / "radio-planning-20261022" / "dist"
 
@@ -27,7 +32,15 @@ class DeliveryStaticFiles(StaticFiles):
         return response
 
 
-def create_delivery_app():
+def mount_workspace_static(app, dist, plain_api_port=None):
+    if plain_api_port is not None:
+        app.mount(API_PREFIX, PlainSceneApi(plain_api_port), name="plain-api")
+        app.mount(PREFIX, DeliveryStaticFiles(directory=str(dist), html=True), name="plain-workspace")
+    # API 路由在前、静态页面在后；不挂载旧前端或仓库根目录。
+    app.mount("/", DeliveryStaticFiles(directory=str(dist), html=True), name="delivery")
+
+
+def create_delivery_app(plain_api_port=None):
     if not (FRONTEND_DIST / "index.html").is_file():
         raise RuntimeError("请先在最新版前端目录执行 npm run build -- --mode integration")
     if not os.environ.get("DATABASE_URL", "").strip():
@@ -45,8 +58,7 @@ def create_delivery_app():
     # 交付入口只使用已初始化的数据库资源，旧文件模式不作为页面降级路径。
     os.environ["RESOURCE_DATASET_MODE"] = "database"
     resource_dataset_service.current()
-    # API 路由在前、静态页面在后；不挂载旧前端或仓库根目录。
-    app.mount("/", DeliveryStaticFiles(directory=str(FRONTEND_DIST), html=True), name="delivery")
+    mount_workspace_static(app, FRONTEND_DIST, plain_api_port)
     return app
 
 
@@ -54,9 +66,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", default=5183, type=int)
+    parser.add_argument("--plain-api-port", type=int, help="独立平原后端的 127.0.0.1 端口")
     args = parser.parse_args()
+    if args.plain_api_port is not None and (not 1024 <= args.plain_api_port <= 65535
+            or args.plain_api_port == args.port):
+        parser.error("平原后端端口须在 1024 至 65535 之间，且与主程序端口不同")
     import uvicorn
-    uvicorn.run(create_delivery_app(), host=args.host, port=args.port, access_log=False)
+    uvicorn.run(create_delivery_app(args.plain_api_port), host=args.host, port=args.port, access_log=False)
 
 
 if __name__ == "__main__":

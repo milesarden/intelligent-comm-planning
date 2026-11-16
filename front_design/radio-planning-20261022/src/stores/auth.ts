@@ -94,6 +94,15 @@ export const useAuthStore=defineStore('auth',()=>{
   function registerLeave(leave:()=>Promise<boolean>,dirty:()=>boolean){
     const key=Symbol();leavers.set(key,{leave,dirty});return()=>{leavers.delete(key);};
   }
+  async function prepareSceneSwitch() {
+    if (busy.value || transition.value || blocked.value) return false;
+    const owner = generation.value;
+    // 先处理各模块自己的保存、放弃和取消，切换地形无需结束当前会话。
+    for (const entry of leavers.values()) {
+      if (!(await entry.leave()) || owner !== generation.value || blocked.value) return false;
+    }
+    return !busy.value && !transition.value;
+  }
   const hasUnsaved=()=>[...leavers.values()].some(x=>x.dirty());
   function registerCleaner(fn:()=>void){cleaners.add(fn);return()=>{cleaners.delete(fn);};}
   async function discardRestricted(){
@@ -114,5 +123,5 @@ export const useAuthStore=defineStore('auth',()=>{
     bypassLeave.value=true;generation.value++;cleaners.forEach(fn=>fn());return true;
   }
   async function retryLogs(){if(await check())operationLogger.retry();}
-  return {identity,checked,error,errorCode,sessionReplaced,notice,busy,generation,currentPath,bypassLeave,transition,pendingLogs,logWarning,can,pageDenied,blocked,accept,check,firstPath,login,switchIntegrationIdentity,leaveSession,registerLeave,hasUnsaved,registerCleaner,discardRestricted,retryLogs};
+  return {identity,checked,error,errorCode,sessionReplaced,notice,busy,generation,currentPath,bypassLeave,transition,pendingLogs,logWarning,can,pageDenied,blocked,accept,check,firstPath,login,switchIntegrationIdentity,leaveSession,registerLeave,prepareSceneSwitch,hasUnsaved,registerCleaner,discardRestricted,retryLogs};
 });

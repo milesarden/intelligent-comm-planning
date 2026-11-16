@@ -115,7 +115,9 @@ export const useResourceLedgerEditStore = defineStore('resource-ledger-edit', ()
     return token === generation && session === auth.generation && !auth.blocked;
   }
   function references(value: ResourceMaintenanceContext): ResourcesData {
-    if (value.resources) return value.resources;
+    // 仅供当前设备表单取值：完整上下文可能仍是保存前快照，以规范化回执设备为准。
+    // 不把单对象回执写回完整资源缓存；台账和GIS仍沿原读取/失效流程刷新。
+    if (value.resources) return value.device ? { ...value.resources, devices: [value.device] } : value.resources;
     return {
       source: '设备维护选项',
       version: value.revision,

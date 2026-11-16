@@ -1,4 +1,5 @@
 import { createAccessService } from '../src/services/access';
+import { httpService } from '../src/services/http';
 import { vi } from 'vitest';
 import { describe,it,expect } from 'vitest';
 import { authFixture } from './helpers/auth';
@@ -16,11 +17,15 @@ describe('统一公开服务权限',()=>{
   });
   it('每个公开方法都映射到权限或明确的登录接口',()=>{
     const s=authFixture(),publicNames=['getLoginCatalog','login','logout','getSession','recoverSystemWorkspace'];
-    expect(Object.keys(s.raw).sort()).toEqual([...Object.keys(servicePermissions),...publicNames].sort());
-    expect(Object.keys(s.service).sort()).toEqual(Object.keys(s.raw).sort());
+    const configuredNames = [...new Set([...Object.keys(s.raw), ...Object.keys(httpService)])].sort();
+    expect(configuredNames).toEqual([...Object.keys(servicePermissions),...publicNames].sort());
+    expect(Object.keys(s.service).sort()).toEqual(configuredNames);
   });
   it.each(Object.keys(servicePermissions))('未登录直调 %s 在业务参数解析前拒绝',async(name)=>{
-    const s=authFixture();await expect((s.service as unknown as Record<string,(...a:unknown[])=>Promise<unknown>>)[name]()).rejects.toMatchObject({code:'AUTH_REQUIRED'});
+    const s=authFixture();
+    const configured={...httpService,...s.raw};
+    const service=createAccessService(()=>configured,null,()=>{});
+    await expect((service as unknown as Record<string,()=>Promise<unknown>>)[name]()).rejects.toMatchObject({code:'AUTH_REQUIRED'});
   });
   it('只读账号可浏览，无法保存资源、提交规划或导出诊断',async()=>{
     const s=authFixture();await s.login('viewer');expect((await s.service.loadPreview()).resources.devices.length).toBeGreaterThan(0);

@@ -8,7 +8,8 @@ describe('正式HTTP规划页重置边界',()=>{
     const button=source.match(/<button\s+v-if="auth\.can\('planning\.reset'\)"[\s\S]*?<\/button/)?.[0];
     expect(button).toBeDefined();expect(button).toMatch(/\sdisabled\s/);
     expect(button).toContain('重置规划草稿不可用，后台历史保留');
-    expect(button).toContain('后台任务、作业、方案与回执历史均保留');expect(button).not.toContain('@click');
+    expect(button).toMatch(/title="[^"]*已保存任务[^"]*方案[^"]*回执历史保留"/);
+    expect(button).not.toContain('@click');
     expect(source).not.toContain('@click="planning.reset"');
   });
   it('保留现有任务编辑入口并通过真实SFC编译，不新增删除契约',()=>{

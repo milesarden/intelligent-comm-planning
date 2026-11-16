@@ -1,7 +1,7 @@
 <template>
   <div
     class="app-shell"
-    :class="{ 'situation-home-shell': route.path === '/situation', 'embedded-business-shell': embedded }"
+    :class="{ 'situation-home-shell': route.path === '/situation', 'embedded-business-shell': embedded, 'unified-terrain-shell': env.unifiedTerrain }"
     @click="closeMenus"
     @keydown.esc="closeMenus"
   >
@@ -36,6 +36,9 @@
       </p>
       <div ref="menuTarget" />
     </section>
+    <div v-if="env.unifiedTerrain" class="terrain-switch-bar">
+      <TerrainSceneSwitcher />
+    </div>
     <div
       v-if="resetError || auth.notice"
       class="reset-error"
@@ -105,6 +108,7 @@ import { useResourceLedgerEditStore } from '../stores/resource-ledger-edit';
 import { useDeviceConfigurationAcceptanceStore } from '../stores/device-configuration-acceptance';
 import { previewService } from '../services';
 import IntegrationIdentitySwitcher from '../components/IntegrationIdentitySwitcher.vue';
+import TerrainSceneSwitcher from '../components/TerrainSceneSwitcher.vue';
 import { randomUuid } from '../services/random-uuid';
 import { ApiError } from '../services/types';
 import { useRuntimeParametersStore } from '../stores/runtime-parameters';
@@ -299,9 +303,19 @@ watch(
 .menu-identity { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #92acc1; font-size: var(--font-secondary); margin-top: 12px; }
 .runtime-notice { color: #d6b987; font-size: var(--font-secondary); }
 .situation-home-shell .app-content { overflow: hidden; scrollbar-gutter: auto; }
-.app-shell:not(.situation-home-shell):not(.embedded-business-shell) .app-content { padding-top: 56px; box-sizing: border-box; }
+.app-shell:not(.situation-home-shell):not(.embedded-business-shell):not(.unified-terrain-shell) .app-content { padding-top: 56px; box-sizing: border-box; }
 .embedded-business-shell { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 .embedded-business-shell > .app-content { flex: 1; min-height: 0; padding-top: 0; }
+.terrain-switch-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.unified-terrain-shell:not(.embedded-business-shell) .terrain-switch-bar { min-height: 60px; padding-left: 72px; box-sizing: border-box; }
 .reset-error {
   padding: 10px 28px;
   color: #ffb4b4;

@@ -258,7 +258,11 @@ export const useTaskInputStore = defineStore('task-input', () => {
       catch (error) { if (error instanceof ApiError && (error.code === 'TASK_NOT_FOUND' || error.status === 404)) return null; throw error; }
     });
     if (value === undefined) return false;
-    if (value) { accept(value); await refreshReferences(false); }
+    if (value) {
+      accept(value);
+      // 冻结方案使用自身的资源快照，打开方案不用等待逐条读回任务编辑引用。
+      void refreshReferences(false);
+    }
     return readable.value;
   }
   function updateInput(input: PlanningInput) { if (!editable.value) return; draft.value = copy(input); issues.value = []; }

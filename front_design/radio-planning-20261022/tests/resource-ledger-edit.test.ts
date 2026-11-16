@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createPinia, disposePinia, setActivePinia } from 'pinia';
 import { previewService } from '../src/services';
 import { createMockService } from '../src/services/mock';
@@ -10,6 +10,12 @@ import { authorizeStore } from './helpers/auth';
 import { TestStorage } from './helpers/storage';
 
 let pinia: ReturnType<typeof createPinia>;
+let importTemplate: Awaited<ReturnType<typeof previewService.getResourceTemplate>>;
+// 真正的XLSX文件只作为导入用例输入；冷依赖和模板生成不占失败/重放动作预算。
+beforeAll(async () => {
+  const service = createMockService(() => new TestStorage());
+  importTemplate = await service.getResourceTemplate('xlsx');
+});
 afterEach(() => { if (pinia) disposePinia(pinia); vi.restoreAllMocks(); });
 async function setup() {
   pinia = createPinia(); setActivePinia(pinia);
@@ -21,6 +27,51 @@ async function setup() {
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 describe('台账独立维护工作区', () => {
+  it('新增设备保存后按回执进入同UUID的编辑状态，旧完整快照不遮蔽新设备', async () => {
+    const { editor, service, read } = await setup();
+    const before = await service.loadPreview();
+    vi.mocked(previewService.loadResourceMaintenanceContext).mockImplementation(async request => ({
+      ...await service.loadResourceMaintenanceContext(request),
+      resources: structuredClone((await service.loadPreview()).resources),
+    }));
+    await editor.openForm(); const id = editor.form!.id;
+    Object.assign(editor.form!.fields, { stationId: 'ND-0001', modelId: 'DM-0004', antennaId: 'AM-0001',
+      antennaHeightM: '8', txPowerDbm: '40', workFreqKhz: '6000', installedAt: '2026-11-05T11:00:00+08:00' });
+    const oldSnapshot = JSON.parse(JSON.stringify(editor.context!.resources));
+    expect(await editor.save(), editor.error).toBe(true);
+    expect(editor.error).toBe(''); expect(editor.form!.id).toBe(id); expect(editor.form!.creating).toBeFalsy();
+    expect(editor.formDirty).toBe(false); expect(editor.context!.device?.id).toBe(id);
+    expect(editor.context!.resources).toEqual(oldSnapshot);
+    expect(read.ledger!.total).toBe(before.resources.devices.length + 1);
+    const create = vi.mocked(previewService.saveResourceChanges).mock.calls[0][0];
+    expect(create.devices).toEqual([]); expect(create.newDevices).toHaveLength(1); expect(create.newDevices![0].id).toBe(id);
+    editor.form!.fields.antennaHeightM = '9'; expect(await editor.save(), editor.error).toBe(true);
+    const update = vi.mocked(previewService.saveResourceChanges).mock.lastCall![0];
+    expect(update.newDevices).toBeUndefined(); expect(update.devices).toMatchObject([{ id, antennaHeightM: 9 }]);
+    const after = await service.loadPreview();
+    expect(after.resources.devices.filter(device => device.id === id)).toHaveLength(1);
+    expect(after.resources.devices.find(device => device.id === id)?.antennaHeightM).toBe(9);
+    expect(after.resources.devices.filter(device => device.id !== id)).toEqual(before.resources.devices);
+  });
+  it('新增设备保存回执丢失后重试复用原事务与UUID，不重复创建', async () => {
+    const { editor, service, storage } = await setup();
+    vi.mocked(previewService.loadResourceMaintenanceContext).mockImplementation(async request => ({
+      ...await service.loadResourceMaintenanceContext(request),
+      resources: structuredClone((await service.loadPreview()).resources),
+    }));
+    await editor.openForm(); const id = editor.form!.id;
+    Object.assign(editor.form!.fields, { stationId: 'ND-0001', modelId: 'DM-0004', antennaId: 'AM-0001',
+      antennaHeightM: '8', txPowerDbm: '40', workFreqKhz: '6000', installedAt: '2026-11-05T11:00:00+08:00' });
+    vi.mocked(previewService.saveResourceChanges).mockImplementationOnce(async request => {
+      await service.saveResourceChanges(request); throw new Error('构造保存回执丢失');
+    });
+    expect(await editor.save()).toBe(false); expect(editor.form!.creating).toBe(true); expect(editor.form!.id).toBe(id);
+    const first = vi.mocked(previewService.saveResourceChanges).mock.lastCall![0], writes = storage.writes;
+    expect(await editor.save(), editor.error).toBe(true);
+    expect(vi.mocked(previewService.saveResourceChanges).mock.lastCall![0]).toEqual(first);
+    expect(storage.writes).toBe(writes); expect(editor.form!.creating).toBeFalsy();
+    expect((await service.loadPreview()).resources.devices.filter(device => device.id === id)).toHaveLength(1);
+  });
   // 台账保存使旧缓存失效；GIS 显式重读同版基线，历史结果仍保持冻结。
   it('仅修改当前设备，GIS 重读可见，其他资源及历史快照保持原样', async () => {
     const { editor, service, preview, storage } = await setup();
@@ -58,7 +109,7 @@ describe('台账独立维护工作区', () => {
   });
   it('导入失败保留文件与预检，重放原请求成功且不重复新增', async () => {
     const { editor, service, storage } = await setup(); await editor.openImport();
-    await editor.previewImport(await service.getResourceTemplate('xlsx'));
+    await editor.previewImport({ ...importTemplate, bytes: importTemplate.bytes.slice() });
     const file = editor.importFile, preview = editor.importPreview; storage.failWrite = true;
     expect(await editor.confirmImport()).toBe(false); expect(editor.importFile).toBe(file); expect(editor.importPreview).toBe(preview);
     expect((await service.loadPreview()).resources.stations).toHaveLength(132);

@@ -22,6 +22,18 @@ export const useDeviceConfigurationAcceptanceStore = defineStore('device-configu
   const editable = computed(() => readable.value && auth.can('resources.device.edit') && !!target.value?.editable && !!data.value);
   const locked = computed(() => busy.value || !!pending.value || !editable.value);
   const dirty = computed(() => visible.value && !!data.value && (power.value !== draftBaseline.value.power || frequency.value !== draftBaseline.value.frequency));
+  const powerRangeError = computed(() => {
+    const maximum = data.value?.model.tx_power_max_dbm;
+    return maximum !== undefined && power.value.trim() && Number(power.value) > maximum
+      ? `请求功率超过型号上限 ${maximum} dBm，请输入符合范围的值。` : '';
+  });
+  const frequencyRangeError = computed(() => {
+    const model = data.value?.model;
+    if (!model || !frequency.value.trim()) return '';
+    const value = Number(frequency.value);
+    return value < model.freq_min_khz || value > model.freq_max_khz
+      ? `请求频率超出型号支持范围 ${model.freq_min_khz}–${model.freq_max_khz} kHz，请输入符合范围的值。` : '';
+  });
   const message = (e: unknown) => e instanceof Error ? e.message : '配置受理请求失败';
   const actor = () => auth.identity?.id ?? '';
   function cancel() { serial++; control?.abort(); control = null; busy.value = false; validated.value = false; }
@@ -77,6 +89,8 @@ export const useDeviceConfigurationAcceptanceStore = defineStore('device-configu
     if (!data.value || !target.value || !power.value.trim() || !frequency.value.trim()) throw new ApiError('请提供功率和频率', 'VALIDATION_ERROR');
     const values = { tx_power_dbm: Number(power.value), work_freq_khz: Number(frequency.value) };
     if (!Number.isFinite(values.tx_power_dbm) || !Number.isFinite(values.work_freq_khz) || values.work_freq_khz <= 0) throw new ApiError('功率和频率必须为有效数值', 'VALIDATION_ERROR');
+    const rangeError = powerRangeError.value || frequencyRangeError.value;
+    if (rangeError) throw new ApiError(rangeError, 'VALIDATION_ERROR');
     return { schema_version: deviceConfigurationSchema, context: 'ledger', base_revision: data.value.resource_revision,
       device_id: data.value.device.device_id, model_id: data.value.device.model_id, values };
   }
@@ -187,6 +201,7 @@ export const useDeviceConfigurationAcceptanceStore = defineStore('device-configu
     } catch (e) { error.value = message(e); return false; }
   }
   return { visible, target, data, power, frequency, busy, error, notice, validated, pending, notFound, acceptance, history, acceptedEvent,
-    readable, editable, locked, dirty, bind, open, refreshContext, validate, submit, verify, resend, discardNotFound, queryHistory, select,
+    readable, editable, locked, dirty, powerRangeError, frequencyRangeError,
+    bind, open, refreshContext, validate, submit, verify, resend, discardNotFound, queryHistory, select,
     discardDraft, close, closeKeepingPending, cancel };
 });

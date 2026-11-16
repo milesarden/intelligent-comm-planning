@@ -50,7 +50,7 @@ export function createDeviceNetworkContext(
   situation: SituationData, resources: ResourcesData, meta: ResourceMeta, draftDirty = false,
 ): DeviceNetworkContext {
   const context: DeviceNetworkContext = {
-    state: 'missing', message: '暂无当前演示网络的关联资料', title: situation.title,
+    state: 'missing', message: '暂无当前网络的关联资料', title: situation.title,
     snapshotId: situation.snapshotId, source: '', links: [], services: [], routes: [],
   };
   // 与原 GIS 结果隐藏条件一致；手工改回已保存值不能重新认证旧结果。

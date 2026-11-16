@@ -29,7 +29,7 @@ function resources(): ResourcesData {
     models: [{ id: 'M1', name: 'Existing model', manufacturer: '', deviceClass: 'HF', freqMinKhz: 1500,
       freqMaxKhz: 30000, txPowerMaxDbm: 50, modulation: [], workMode: [] }], antennas: [{ id: 'A1', name: 'Existing antenna' }],
     interferences: [{ id: 'I1', name: 'West interference', coordinate: [113.500000123, 37.123456789], elevationM: null,
-      antennaHeightM: 0, centerFreqKhz: 1500, bandwidthKhz: 10, txPowerDbm: -10, antennaGainDbi: null,
+      antennaHeightM: 0, centerFreqKhz: 1500, bandwidthKhz: 10, txPowerDbm: -10, antennaGainDbi: 0,
       interferenceType: 'NOISE', patternType: null, azimuthDeg: null, dutyCycle: null, active: false, origin: 'SOURCE' }], candidateLinks: [] };
 }
 

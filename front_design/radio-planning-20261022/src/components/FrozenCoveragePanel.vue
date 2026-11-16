@@ -230,6 +230,7 @@ import { onBeforeRouteLeave } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useFrozenCoverage } from '../composables/useFrozenCoverage';
 import { coverageBandwidthChoices } from '../services/frozen-coverage-decode';
+import { terrainStorageKey } from '../services/terrain-storage';
 import DecisionDialog from './DecisionDialog.vue';
 import type { Decision, DecisionRequest } from '../types/resource-edit';
 import FrozenCoverageBandwidthEditor, { type CoverageBandwidthChange, type CoverageBandwidthRow } from './FrozenCoverageBandwidthEditor.vue';
@@ -281,9 +282,10 @@ const guardedClient=computed<FrozenCoverageClient|undefined>(()=>{
     cancel:(...args)=>current().cancel(...args),
   };
 });
+const coverageQuery = (): FrozenCoverageQuery => ({ ...binding.value.query, engineVersion: coverageVersion.value });
 const state = useFrozenCoverage({
   // 未处理输入或原号时固定来源；失权冻结现场，不把它挂到新账号/新方案。
-  query: () => ({...binding.value.query,engineVersion:coverageVersion.value}),
+  query: coverageQuery,
   parameters: () => ({
     radius_m: radiusKm.value * 1000,
     cell_m: cellM.value,
@@ -300,7 +302,7 @@ const retainedSelection=shallowRef<SelectionRequest|null>(null);
 const selectionConfirmed=ref(false);
 const leaveError=ref(''),leaveDecision=ref<DecisionRequest|null>(null);
 let resolveLeave:((value:Decision)=>void)|undefined;
-const selectionKey=()=>`frozen-coverage.bandwidth-pending:${JSON.stringify([binding.value.accountId,binding.value.query])}`;
+const selectionKey=()=>terrainStorageKey(`frozen-coverage.bandwidth-pending:${JSON.stringify([binding.value.accountId,binding.value.query])}`);
 function storeSelection(value:SelectionRequest|null,rejected=false){
   try{if(value)sessionStorage.setItem(selectionKey(),JSON.stringify({...value,rejected}));else sessionStorage.removeItem(selectionKey());}
   catch{ /* 内存与离开保护仍保留原号；不把存储失败当作服务端成功。 */ }
@@ -308,7 +310,7 @@ function storeSelection(value:SelectionRequest|null,rejected=false){
 function restoreSelection(){
   try{
     const raw=sessionStorage.getItem(selectionKey());if(!raw)return;
-    const value=JSON.parse(raw) as SelectionRequest&{rejected?:boolean},query=binding.value.query;
+    const value=JSON.parse(raw) as SelectionRequest&{rejected?:boolean},query=coverageQuery();
     if(!value||typeof value.requestId!=='string'||!value.requestId.trim()||JSON.stringify(value.query)!==JSON.stringify(query)
       ||value.anchor?.plan_id!==query.planId||value.anchor.task_id!==query.taskId||value.anchor.snapshot_id!==query.snapshotId||value.anchor.resource_revision!==query.resourceRevision)
       throw new Error('保留的带宽请求来源无效，未重放');

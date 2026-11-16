@@ -11,6 +11,7 @@ import { diagnosisPresetResult } from '../src/mocks/diagnosis-result-presets';
 import { nodeLayer, linkLayer, projectCoordinate } from '../src/maps/layers';
 import { planningPresets } from '../src/mocks/planning-presets';
 import { diagnosisPresets } from '../src/mocks/diagnosis-presets';
+import { LINK_STATUS_STYLES } from '../src/config/link-status';
 // 数据层断言与实际浏览器点击/视觉验收分开记录。
 describe('诊断地图图层', () => {
   it('传播方向来自有序步骤，零长度锚点不绘线，空输入兼容其他地图', () => {
@@ -35,8 +36,22 @@ describe('诊断地图图层', () => {
     expect(feature.getGeometry()!.getCoordinates()).toEqual(projectCoordinate(network.baseline.stations.find(n => n.id === 'ND-0003')!.coordinate));
     expect(network.baseline).toEqual(original);
     expect(nodeLayer(original.stations).getSource()!.getSource()!.getFeatures()).toHaveLength(3);
-    // 诊断注入标记独立于底层链路；优秀链路沿用共用的 3 px 线宽。
-    const links = linkLayer(network.result!.links,original.stations); expect((links.getStyleFunction()!(links.getSource()!.getFeatures()[0],1) as Style).getStroke()!.getWidth()).toBe(3);
+    // 诊断注入标记独立于底层链路，四种状态沿用全局的颜色和线宽。
+    const states = ['EXCELLENT', 'GOOD', 'WARNING', 'FAULT'] as const;
+    const example = network.result!.links[0];
+    const links = linkLayer(states.map(state => ({ ...example, id: state, state })), original.stations);
+    const features = links.getSource()!.getFeatures();
+    expect(features).toHaveLength(states.length);
+    const strokes = states.map(state => {
+      const feature = features.find(item => item.get('objectId') === state)!;
+      const stroke = (links.getStyleFunction()!(feature, 1) as Style).getStroke()!;
+      const expected = LINK_STATUS_STYLES[state];
+      expect(stroke.getColor()).toBe(expected.color);
+      expect(stroke.getWidth()).toBe(expected.width);
+      return stroke;
+    });
+    expect(new Set(strokes.map(stroke => stroke.getColor())).size).toBe(states.length);
+    expect(new Set(strokes.map(stroke => stroke.getWidth())).size).toBe(states.length);
   });
   it('影响区域沿用预设环与关联故障，可区分等级', () => {
     const multiple = diagnosisPresets.find(p => p.id === 'balanced:multiple')!;

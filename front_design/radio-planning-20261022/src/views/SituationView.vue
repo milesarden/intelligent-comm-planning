@@ -16,7 +16,7 @@
         <button v-if="frozenView && analysisReturn" class="btn small" :onClick="analysisReturn.open">返回规划方案</button>
         <!-- 页面标题与导航同名，沿用业务页面共享的标题样式。 -->
         <h1>GIS 工作台</h1>
-        <span class="divider" /><span class="muted">太行山地区域通信保障</span
+        <span class="divider" /><span class="muted">{{ env.plainTerrain ? '平原区域通信保障' : '太行山地区域通信保障' }}</span
         ><span
           class="chip blue"
           aria-label="当前视图数据来源"
@@ -3520,6 +3520,10 @@ const { basemap: terrainBasemap, message: terrainMessage } = useTerrainBasemap(
 .situation-toolbar .muted {
   font-size: var(--font-control);
 }
+.is-editing .situation-toolbar .muted,
+.is-picking .situation-toolbar .muted {
+  color: var(--gis-toolbar-muted, var(--muted));
+}
 /* 模式提示位于页面顶部，编辑与取点同时有边框和文字信号。 */
 .mode-indicator {
   display: inline-flex;
@@ -3529,19 +3533,19 @@ const { basemap: terrainBasemap, message: terrainMessage } = useTerrainBasemap(
   font-size: var(--font-control);
 }
 .is-editing .situation-toolbar {
-  border-color: #42bbdf;
-  background: #123047;
+  border-color: var(--gis-edit-border, #42bbdf);
+  background: var(--gis-edit-background, #123047);
 }
 .is-editing .mode-indicator {
-  color: #8be2f8;
+  color: var(--gis-edit-text, #8be2f8);
   font-weight: 600;
 }
 .is-picking .situation-toolbar {
-  border-color: #f0bf67;
-  background: #362f21;
+  border-color: var(--gis-pick-border, #f0bf67);
+  background: var(--gis-pick-background, #362f21);
 }
 .is-picking .mode-indicator {
-  color: #f0d18c;
+  color: var(--gis-pick-text, #f0d18c);
 }
 .save-feedback.succeeded {
   border-left: 3px solid #42cba3;

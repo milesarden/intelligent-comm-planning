@@ -151,7 +151,8 @@ describe('GIS跨组宿主静态边界', () => {
     expect(component).not.toContain('setInterval(');
     expect(component).toContain(':allow-follow="sameResource"');
     expect(component).toContain('complete-snapshot');
-    expect(component).toContain('验收风险：配置周期超过 60 秒');
+    expect(component).toContain("> 60");
+    expect(component).toContain('状态刷新间隔超过 60 秒');
     expect(component).toContain("emit('deviceStatus', value)");
     expect(host).toContain(':frozen-device-status="deviceStatus"');
     expect(map).toContain('observeGisDeviceStatusRender(map, statusDevices');

@@ -1,5 +1,7 @@
 <template>
   <section class="gis-situation" aria-label="GIS 态势只读地图">
+    <PlainTerrainMap v-if="!env.unifiedTerrain && !plainWorkspace && terrainScene === 'plain'" />
+    <template v-else>
     <MapCanvas
       ref="map"
       :stations="[]"
@@ -16,24 +18,28 @@
       :show-roads="false"
       @hover-frozen-devices="model.previewDevices"
     />
-    <div class="source-badge" :class="{ example: frame.example }" aria-live="polite">
-      <span class="source-dot" />
-      <strong>{{ frame.label }}</strong>
-      <span>{{ frame.example ? '受控构造示例 · 非实测' : frame.version + ' · 算法预测' }}</span>
+    <div class="situation-topbar">
+      <div class="situation-messages">
+        <div class="source-badge" :class="{ example: frame.example }" aria-live="polite">
+          <span class="source-dot" />
+          <div class="source-copy">
+            <strong>{{ frame.label }}</strong>
+            <span>{{ frame.example ? '内置示例 · 非实测' : frame.version + ' · 算法预测' }}</span>
+          </div>
+        </div>
+        <p v-if="model.displayingLiveInterferences" class="interference-source-badge">干扰源已更新；规划链路仍为原计算结果</p>
+        <span v-if="model.busy" class="read-status" role="status">正在核对态势来源…</span>
+      </div>
+      <details v-if="embeddedModule" class="embedded-map-settings">
+        <summary>显示设置</summary>
+        <div ref="embeddedControlsTarget" />
+      </details>
     </div>
-    <p v-if="model.displayingLiveInterferences" class="interference-source-badge">干扰源已更新；规划链路仍为原计算结果</p>
-    <p v-if="model.error" class="map-notice error" role="alert">{{ model.error }}</p>
-    <p v-else-if="model.notice" class="map-notice" role="status">{{ model.notice }}</p>
-    <span v-if="model.busy" class="read-status" role="status">正在核对态势来源…</span>
     <SituationCoverageLegend v-if="model.coverage" class="coverage-legend-position" :overlay="model.coverage" />
-    <details v-if="embeddedModule" class="embedded-map-settings">
-      <summary>显示设置</summary>
-      <div ref="embeddedControlsTarget" />
-    </details>
     <Teleport v-if="controlsTarget" :to="controlsTarget">
       <section class="situation-controls" aria-label="GIS 态势显示设置">
         <h2>态势显示</h2>
-        <label v-if="model.canAutoFollow" class="auto-follow"><input type="checkbox" :checked="model.autoFollow" @change="changeAutoFollow" />每30秒自动跟随最新已转正方案和已保存干扰源</label>
+        <label v-if="model.canAutoFollow" class="auto-follow"><input type="checkbox" :checked="model.autoFollow" @change="changeAutoFollow" />30 秒内自动跟随最新已转正方案和已保存干扰源</label>
         <p v-if="model.canAutoFollow && !model.autoFollow" class="source-note">已暂停自动跟随，重新勾选可恢复。切换历史方案时仅显示原冻结干扰源。</p>
         <p v-if="model.lastCheckedAt" class="source-note">最近核对：{{ lastCheckedTime }}。只读刷新，不启动规划或干扰计算。</p>
         <div class="control-actions">
@@ -80,24 +86,43 @@
         </details>
       </section>
     </Teleport>
+    </template>
+    <div class="map-footnotes">
+      <template v-if="plainWorkspace || terrainScene === 'hills'">
+        <p v-if="model.error" class="map-notice error" role="alert">{{ model.error }}</p>
+        <p v-else-if="model.notice" class="map-notice" role="status">{{ model.notice }}</p>
+      </template>
+      <span v-if="!env.unifiedTerrain && plainWorkspace" class="terrain-scene-control">地形场景　平原</span>
+      <label v-else-if="!env.unifiedTerrain" class="terrain-scene-control">
+        地形场景
+        <select v-model="terrainScene">
+          <option value="hills">丘陵</option>
+          <option value="plain">平原</option>
+        </select>
+      </label>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, reactive, ref, type Ref } from 'vue';
 import MapCanvas from '../components/MapCanvas.vue';
+import PlainTerrainMap from '../components/PlainTerrainMap.vue';
 import SituationCoverageLegend from '../components/SituationCoverageLegend.vue';
-import { gisExampleMetadata, useGisSituation } from '../composables/useGisSituation';
+import { useGisSituation } from '../composables/useGisSituation';
+import { env } from '../config/env';
 const menuTarget = inject<Ref<HTMLElement | null>>('applicationMenuTarget', ref(null));
 const embeddedModule = inject('embeddedModule', false);
 const embeddedControlsTarget = ref<HTMLElement | null>(null);
 const controlsTarget = computed(() => embeddedModule ? embeddedControlsTarget.value : menuTarget.value);
 const model = reactive(useGisSituation());
 const map = ref<InstanceType<typeof MapCanvas>>();
+const terrainScene = ref<'hills' | 'plain'>('hills');
+const plainWorkspace = env.plainTerrain;
 const frame = computed(() => model.frame);
 const hoverContext = computed(() => ({ key: frame.value.key + ':' + (model.displayingLiveInterferences ? model.liveInterferences?.revision : 'frozen'),
-  source: '节点/设备：' + (frame.value.example ? '受控构造示例 · 冻结规划参数 · 非实测' : '已保存冻结规划参数 · 非实测') + '；' + model.interferenceSourceLabel,
-  models: frame.value.example ? gisExampleMetadata.models : [] }));
+  source: '节点/设备：' + (frame.value.example ? '内置示例 · 冻结规划参数 · 非实测' : '已保存冻结规划参数 · 非实测') + '；' + model.interferenceSourceLabel,
+  models: frame.value.example ? model.exampleModels : [] }));
 const lastCheckedTime = computed(() => model.lastCheckedAt ? new Date(model.lastCheckedAt).toLocaleTimeString('zh-CN', { hour12: false }) : '');
 function changeAutoFollow(event: Event) { model.setAutoFollow((event.target as HTMLInputElement).checked); }
 const coverageDevices = computed(() => frame.value.coverage?.result?.devices.filter(device => device.status === 'COMPLETE') ?? []);
@@ -128,20 +153,82 @@ onMounted(async () => {
 <style scoped>
 .gis-situation { position: relative; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: #081621; }
 .gis-situation :deep(.map-wrap) { min-height: 0; height: 100%; }
-.embedded-map-settings { position:absolute; top:16px; right:16px; z-index:35; width:min(340px, calc(100% - 32px)); color:#dce7f5; border:1px solid #386179; border-radius:7px; background:#0c1d2ff2; box-shadow:0 8px 24px #0004; }
-.embedded-map-settings > summary { cursor:pointer; padding:11px 14px; font-weight:600; }
-.embedded-map-settings[open] { max-height:calc(100% - 32px); overflow:auto; }
+.map-footnotes {
+  position: absolute;
+  left: 16px;
+  bottom: 50px;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: min(540px, calc(100% - 32px));
+  pointer-events: none;
+}
+.terrain-scene-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 1px solid #386179;
+  border-radius: 5px;
+  background: #0c1a2bf0;
+  color: #dce7f5;
+  font-size: var(--font-control);
+  pointer-events: auto;
+}
+.terrain-scene-control select {
+  padding: 3px 7px;
+  border: 1px solid #476984;
+  border-radius: 3px;
+  background: #142b42;
+  color: inherit;
+  font: inherit;
+  color-scheme: dark;
+}
+.situation-topbar {
+  position: absolute;
+  inset: 16px 16px auto 76px;
+  z-index: 35;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  pointer-events: none;
+}
+.situation-messages { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.embedded-map-settings {
+  justify-self: end;
+  box-sizing: border-box;
+  width: max-content;
+  color: #dce7f5;
+  border: 1px solid #386179;
+  border-radius: 7px;
+  background: #0c1d2f;
+  box-shadow: 0 8px 24px #0004;
+  pointer-events: auto;
+}
+.embedded-map-settings > summary { cursor: pointer; padding: 9px 12px; font-size: var(--font-control); font-weight: 600; }
+.embedded-map-settings[open] { width: min(340px, 45vw); max-height: calc(100dvh - 100px); overflow: auto; }
 .embedded-map-settings .situation-controls { padding:0 14px 14px; margin:0; border:0; }
 .coverage-legend-position { position: absolute; right: 18px; bottom: 40px; max-width: min(310px, calc(100% - 36px)); }
-.source-badge { position: absolute; left: 76px; top: 20px; display: flex; gap: 9px; align-items: center; max-width: calc(100% - 105px); padding: 9px 12px; border: 1px solid #386179; border-radius: 7px; background: #091b2bdd; color: #c7e0ee; font-size: var(--font-secondary); pointer-events: none; }
-.source-badge strong { font-size: var(--font-control); white-space: nowrap; }
-.source-badge > span:last-child { color: #9bb7c9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.source-dot { width: 6px; height: 6px; border-radius: 50%; background: #6acebb; }
-.interference-source-badge { position: absolute; left: 76px; top: 59px; max-width: calc(100% - 105px); margin: 0; padding: 6px 10px; border: 1px solid #79643d; border-radius: 6px; background: #142332ed; color: #e4c88e; font-size: var(--font-caption); line-height: 1.7; pointer-events: none; }
+.source-badge, .interference-source-badge, .read-status {
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--font-control);
+  line-height: 1.45;
+}
+.source-badge { display: flex; gap: 8px; align-items: flex-start; padding: 8px 11px; border: 1px solid #386179; border-radius: 7px; background: #091b2bf2; color: #c7e0ee; }
+.source-copy { display: flex; flex-wrap: wrap; gap: 2px 9px; min-width: 0; }
+.source-copy > span { color: #afc8d9; }
+.source-dot { flex: 0 0 6px; height: 6px; margin-top: .5em; border-radius: 50%; background: #6acebb; }
+.interference-source-badge { padding: 5px 9px; border: 1px solid #79643d; border-radius: 6px; background: #142332ed; color: #e4c88e; }
 .example .source-dot { background: #ecc582; }
-.map-notice { position: absolute; bottom: 70px; left: 18px; max-width: min(620px, calc(100% - 36px)); margin: 0; padding: 9px 12px; border: 1px solid #416176; border-radius: 6px; background: #0b2032ed; color: #c7dfef; font-size: var(--font-control); line-height: 1.7; pointer-events: none; }
+.map-notice { margin: 0; padding: 9px 12px; border: 1px solid #416176; border-radius: 6px; background: #0b2032ed; color: #c7dfef; font-size: var(--font-control); line-height: 1.7; }
 .map-notice.error { border-color: #876745; color: #efc68f; }
-.read-status { position: absolute; right: 18px; top: 20px; padding: 9px 12px; border-radius: 6px; background: #0b2032ed; color: #b4d8f0; font-size: var(--font-control); pointer-events: none; }
+.read-status { padding: 5px 9px; border-radius: 6px; background: #0b2032ed; color: #b4d8f0; }
 .situation-controls { display: grid; gap: 12px; border-top: 1px solid #2f455b; padding-top: 14px; margin-top: 14px; font-size: var(--font-control); }
 h2 { margin: 0; color: #e2eff8; font-size: 14px; }
 .control-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -157,5 +244,11 @@ label { display: grid; gap: 6px; min-width: 0; color: #bed4e3; }
 .plan-option { width: 100%; display: grid; text-align: left; gap: 5px; background: #142d40; border: 1px solid #2d4c62; border-radius: 5px; padding: 9px; color: #c9e0ee; margin: 6px 0; cursor: pointer; }
 .plan-option span { color: #98b6c9; font-size: var(--font-caption); }
 .plan-option:hover { border-color: #6ca5c5; }
-@media (max-width: 650px) { .source-badge { left: 66px; top: 18px; } .source-badge > span:last-child { display: none; } .read-status { top: 70px; } }
+@media (max-width: 650px) {
+  .situation-topbar { inset: 12px 12px auto 64px; }
+  .embedded-map-settings[open] { grid-column: 1 / -1; width: min(340px, 100%); max-height: max(96px, calc(100dvh - 170px)); }
+}
+@media (max-width: 420px) {
+  .situation-topbar { grid-template-columns: minmax(0, 1fr); }
+}
 </style>

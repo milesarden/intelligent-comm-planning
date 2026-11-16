@@ -8,6 +8,7 @@ import { projectCoordinate } from './layers';
 import { isLocalTerrainCell } from '../services/frozen-coverage-decode';
 import type { FrozenCoverageOverlay,FrozenCoverageFeature } from '../types/frozen-coverage';
 import { attachCoverageRaster,cachedCoverageRaster } from './frozen-coverage-raster';
+import { GIS_SITUATION_LABELS } from './gis-symbols';
 
 // 消去相邻格/色带的共享边，保留盲区内孔；不使用凸包或圆形补面。
 export function coverageOutline(features:readonly FrozenCoverageFeature[]){
@@ -44,16 +45,22 @@ function selectedCoverageDevice(overlay:FrozenCoverageOverlay,snapshotId:string,
     ?overlay.result.devices.find(row=>row.device_id===overlay.deviceId&&row.status==='COMPLETE'):undefined;
 }
 
-export function frozenCoverageDeviceLayer(overlay:FrozenCoverageOverlay,snapshotId:string,planId?:string) {
+export function frozenCoverageDeviceLayer(overlay:FrozenCoverageOverlay,snapshotId:string,planId?:string,readonlySituation=false) {
   const device=selectedCoverageDevice(overlay,snapshotId,planId);
   const features:Feature[]=[];
   if(device&&Number.isFinite(device.lon)&&Number.isFinite(device.lat)) {
     const marker=new Feature({geometry:new Point(projectCoordinate([device.lon,device.lat])),kind:'frozen-coverage-device',objectId:device.node_id,deviceId:device.device_id});
-    marker.setStyle(new Style({image:new Circle({radius:6,fill:new Fill({color:'#174a50'}),stroke:new Stroke({color:'#ffffff',width:2})}),
-      text:new Text({text:device.device_id,offsetX:15,offsetY:-18,textAlign:'left',font:'12px Microsoft YaHei',fill:new Fill({color:'#174453'}),backgroundFill:new Fill({color:'#f4f8fbef'}),padding:[3,5,3,5]})}));
+    const image=new Circle({radius:6,fill:new Fill({color:'#174a50'}),stroke:new Stroke({color:'#ffffff',width:2}),
+      declutterMode:readonlySituation?'none':undefined});
+    const text=new Text({text:device.device_id,offsetX:15,offsetY:-18,textAlign:'left',
+      font:readonlySituation?GIS_SITUATION_LABELS.font:'12px Microsoft YaHei',
+      declutterMode:readonlySituation?'declutter':undefined,
+      fill:new Fill({color:'#174453'}),backgroundFill:new Fill({color:'#f4f8fbef'}),padding:[3,5,3,5]});
+    marker.setStyle(readonlySituation?[new Style({image}), new Style({text})]:new Style({image,text}));
     features.push(marker);
   }
-  return new VectorLayer({source:new VectorSource({features}),zIndex:75});
+  return new VectorLayer({source:new VectorSource({features}),zIndex:75,
+    declutter:readonlySituation?GIS_SITUATION_LABELS.group:undefined});
 }
 
 export function frozenCoverageLayer(overlay:FrozenCoverageOverlay,snapshotId:string,planId?:string) {

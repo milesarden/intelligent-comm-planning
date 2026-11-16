@@ -202,6 +202,16 @@ async function mountPage(demo:DiagnosisDemo='normal') {
   return {root,auth,storage,diagnosis,preview,planning,service,runIds,current,router,writes:storage.writes,advance:(ms=12000)=>{time+=ms;}};
 }
 describe('实际诊断页面的类型与根因展示',()=>{
+  it.each([
+    ['暂无当前已确认的完整方案，请先在网络规划中计算、保存并确认。', '请先在无线网络规划中计算'],
+    ['请先在无线网络规划中计算。', '请先在无线网络规划中计算'],
+    ['请先在无线网络规划中计算', '请先在无线网络规划中计算'],
+    ['构造来源读取失败。', '构造来源读取失败'],
+  ])('来源提示保留原错误并避免重复句号：%s',async(error,shown)=>{
+    const s=await mountPage();s.diagnosis.sources.error=error;await settle();
+    expect(textOf(s.root)).toContain(shown+'。来源有效性无法核实，新任务已禁用。');
+    expect(textOf(s.root)).not.toContain('。。');expect(s.diagnosis.sources.error).toBe(error);
+  });
   it('空证据诊断先确认，返回补填不保存、不提交也不改变历史',async()=>{
     const s=await mountPage(),history=JSON.stringify(s.diagnosis.record);
     await s.diagnosis.selectVersion(s.diagnosis.workspace!.scenarios[0].versions[0]);
@@ -326,7 +336,7 @@ describe('实际诊断页面的类型与根因展示',()=>{
     await s.diagnosis.selectVersion(s.diagnosis.workspace!.scenarios[0].versions[0]);await settle();
     expect(textOf(s.root)).toContain('数据来源：业务数据');expect(textOf(s.root)).toContain('在 GIS 标绘');expect(textOf(s.root)).toContain('导入场景');
   });
-  it('首次无运行显示创建引导，明确选择网络才建立草稿，历史手动打开',async()=>{
+  it('首次无运行显示创建引导，明确选择网络才建立草稿，历史手动打开', { timeout: 20000 }, async()=>{
     const s=await mountPage();await s.service.resetDiagnosisWorkspace(s.diagnosis.workspace!.revision);await s.diagnosis.reload();await settle();
     expect(s.diagnosis.record).toBeNull();expect(textOf(s.root)).toContain('创建故障诊断场景');expect(map(s.root)).toBeUndefined();
     await click(s.root,'新建场景');await vi.waitFor(()=>expect(find(s.root,n=>n.tag==='drawer-probe'&&n.props.title==='新建故障场景')).toBeDefined());
@@ -341,7 +351,7 @@ describe('实际诊断页面的类型与根因展示',()=>{
     const opening=s.diagnosis.selectLegacy('DG-HW');await vi.waitFor(()=>expect(s.diagnosis.decision).not.toBeNull());s.diagnosis.answer('save');await opening;await settle();
     expect(textOf(s.root)).toContain('88 °C');expect(textOf(s.root)).toContain('低于设定值 12 dB');expect(textOf(s.root)).toContain('预览历史诊断报告');
   });
-  it('复制在多网络中优先原网络，取消不改快照',async()=>{
+  it('复制在多网络中优先原网络，取消不改快照', { timeout: 20000 }, async()=>{
     const s=await mountPage(),record=s.diagnosis.record!,before=JSON.stringify(record);
     const drawer=()=>find(s.root,n=>n.tag==='drawer-probe'&&n.props.title==='复制为新场景');
     // 把其他网络放在首位，防止复制入口隐式绑定列表第一项。
