@@ -189,10 +189,21 @@ def check(freq_result=None, freq_tasks=None, param_result=None,
     # ── 7 路由可达 ──
     if route_result is not None:
         checked.append("路由可达")
+        route_rows = route_result.get("routes", [])
+        missing = {row["demand_id"]: row for row in route_rows if not row.get("reachable")}
         for did in route_result.get("unreachable_demand_ids", []):
-            issues.append(_issue("ROUTE_UNREACHABLE", "SEVERE",
-                                 "通联需求 %s 无可达路由" % did, demand_id=did))
-        for r in route_result.get("routes", []):
+            row = missing.get(did, {})
+            optional = row.get("mandatory") is False and not row.get("manual_errors")
+            severity = "MODERATE" if optional else "SEVERE"
+            reason = row.get("unreachable_reason", "无可达路由")
+            label = "非必要通联需求" if optional else "通联需求"
+            issues.append(_issue("ROUTE_UNREACHABLE", severity,
+                                 f"{label} {did} {reason}", demand_id=did))
+        for r in route_rows:
+            for e in r.get("manual_errors", []) or []:
+                issues.append(_issue("MANUAL_PATH_INVALID", "SEVERE",
+                                     "需求 %s 的人工路径不可用：%s" % (r["demand_id"], e),
+                                     demand_id=r["demand_id"]))
             if not r.get("reachable"):
                 continue
             if r.get("backup_type") == "NONE" and r.get("single_point_risks"):
@@ -201,10 +212,6 @@ def check(freq_result=None, freq_tasks=None, param_result=None,
                     "需求 %s 无备用路由，且主路由经过单点 %s"
                     % (r["demand_id"], "、".join(r["single_point_risks"])),
                     demand_id=r["demand_id"], nodes=r["single_point_risks"]))
-            for e in r.get("manual_errors", []) or []:
-                issues.append(_issue("MANUAL_PATH_INVALID", "SEVERE",
-                                     "需求 %s 的人工路径不可用：%s" % (r["demand_id"], e),
-                                     demand_id=r["demand_id"]))
 
     issues.sort(key=lambda i: (SEVERITY_ORDER.get(i["severity"], 9), i["kind"]))
     by_kind = {}

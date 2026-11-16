@@ -202,6 +202,16 @@ async function mountPage(demo:DiagnosisDemo='normal') {
   return {root,auth,storage,diagnosis,preview,planning,service,runIds,current,router,writes:storage.writes,advance:(ms=12000)=>{time+=ms;}};
 }
 describe('实际诊断页面的类型与根因展示',()=>{
+  it.each([
+    ['暂无当前已确认的完整方案，请先在网络规划中计算、保存并确认。', '请先在无线网络规划中计算'],
+    ['请先在无线网络规划中计算。', '请先在无线网络规划中计算'],
+    ['请先在无线网络规划中计算', '请先在无线网络规划中计算'],
+    ['构造来源读取失败。', '构造来源读取失败'],
+  ])('来源提示保留原错误并避免重复句号：%s',async(error,shown)=>{
+    const s=await mountPage();s.diagnosis.sources.error=error;await settle();
+    expect(textOf(s.root)).toContain(shown+'。来源有效性无法核实，新任务已禁用。');
+    expect(textOf(s.root)).not.toContain('。。');expect(s.diagnosis.sources.error).toBe(error);
+  });
   it('空证据诊断先确认，返回补填不保存、不提交也不改变历史',async()=>{
     const s=await mountPage(),history=JSON.stringify(s.diagnosis.record);
     await s.diagnosis.selectVersion(s.diagnosis.workspace!.scenarios[0].versions[0]);

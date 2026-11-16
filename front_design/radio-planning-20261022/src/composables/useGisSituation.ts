@@ -86,6 +86,13 @@ function initialFrame(plain: boolean): GisSituationFrame {
 }
 
 const reasonText = (reason: unknown) => reason instanceof Error ? reason.message : '读取失败，请重试';
+function planNotice(network: GisNetwork, state: PlanningPlanSummary['state'], sourceChanged = network.identity.source_changed) {
+  return '构造数据 · 算法预测 · 非实测。' +
+    (sourceChanged ? ' 来源已变化，按原冻结版本显示。' : '') +
+    (state === 'REFERENCE' ? ' 未达标参考方案。' : '') +
+    (network.interferences_notice ? ' ' + network.interferences_notice
+      : network.interferences ? '' : ' 该历史方案未冻结干扰源，未借用当前资源替代。');
+}
 
 // 新帧的网络、地形和覆盖只在核对完毕后一起发布；失败及迟到响应均不清空已显示的帧。
 export function createGisSituation(services?: GisSituationServices, plain = false) {
@@ -152,24 +159,26 @@ export function createGisSituation(services?: GisSituationServices, plain = fals
     const surface = await services.plans.getSurface(frozen, network, token.controller.signal);
     if (!token.valid()) return;
     if (!surface.terrain) throw new Error(surface.terrain_notice || '该方案未提供可核验的冻结 DEM');
-    let basemap: TerrainBasemap | undefined;
+    const terrain = surface.terrain;
+    const current = frame.value;
+    const sameTerrain = current.terrain.sourceSha256 === terrain.sourceSha256
+      && terrain.bounds.every((coordinate, index) => coordinate === current.terrain.bounds[index]);
+    let loaded: TerrainBasemap | undefined;
     try {
-      basemap = await terrainLoader(surface.terrain, globalThis.fetch, import.meta.env.BASE_URL, token.controller.signal);
-      if (!token.valid()) { basemap.dispose(); return; }
+      const basemap = sameTerrain && current.basemap
+        ? current.basemap
+        : (loaded = await terrainLoader(terrain, globalThis.fetch, import.meta.env.BASE_URL, token.controller.signal));
+      if (!token.valid()) { loaded?.dispose(); return; }
       const coverage = services.getCoverage ? await services.getCoverage({
         ...frozen, context: 'gis', resourceRevision: network.identity.resource_revision, engineVersion: 'V01-6',
       }, token.controller.signal) : null;
-      if (!token.valid()) { basemap.dispose(); return; }
+      if (!token.valid()) { loaded?.dispose(); return; }
       const sources = network.interferences;
       return { key: network.identity.snapshot_id, label: row.name, version: row.version,
-        example: false, network, terrain: surface.terrain, basemap, coverage,
+        example: false, network, terrain, basemap, coverage,
         interferences: sources ?? [],
-        notice: '构造数据 · 算法预测 · 非实测。' +
-          (network.identity.source_changed ? ' 来源已变化，按原冻结版本显示。' : '') +
-          (row.state === 'REFERENCE' ? ' 未达标参考方案。' : '') +
-          (network.interferences_notice ? ' ' + network.interferences_notice
-            : sources ? '' : ' 该历史方案未冻结干扰源，未借用当前资源替代。') } satisfies GisSituationFrame;
-    } catch (reason) { basemap?.dispose(); throw reason; }
+        notice: planNotice(network, row.state) } satisfies GisSituationFrame;
+    } catch (reason) { loaded?.dispose(); throw reason; }
   }
   async function openPlan(row: PlanningPlanSummary) {
     pauseFollowing();
@@ -179,12 +188,12 @@ export function createGisSituation(services?: GisSituationServices, plain = fals
       if (next && token.valid()) {
         replace(next); useLiveInterferences.value = false; loadedPlanSignature = planSignature(captured);
         if (!next.coverage?.result) notice.value = '该方案暂无已保存的 V6 地形覆盖；未绘制推测覆盖。';
-      } else if (next?.basemap) next.basemap.dispose();
+      } else if (next?.basemap && next.basemap !== frame.value.basemap) next.basemap.dispose();
     }
     catch (reason) { if (token.valid()) error.value = `${reasonText(reason)}。当前态势已保留。`; }
     finally { if (token.valid()) busy.value = false; }
   }
-  const planSignature = (row: PlanningPlanSummary) => JSON.stringify([row.taskId, row.id, row.version, row.state, row.sourceChanged]);
+  const planSignature = (row: PlanningPlanSummary) => JSON.stringify([row.taskId, row.id, row.version, row.state]);
   async function readSavedInterferences(token: ReturnType<typeof begin>) {
     if (!services?.resources) return undefined;
     const context = await services.resources.loadResourceReadContext({ context: 'gis', signal: token.controller.signal });
@@ -216,19 +225,31 @@ export function createGisSituation(services?: GisSituationServices, plain = fals
     const token = begin();
     let next: GisSituationFrame | undefined;
     try {
-      if (!services) throw new Error('当前数据模式只提供内置受控示例');
-      // 自动刷新只采用已转正方案，已保存及参考结果留在手动选择目录。
-      const page = await services.queryPlans({
-        context: 'gis', pageNum: 1, pageSize: 20, state: 'CONFIRMED', signal: token.controller.signal,
-      });
+      const service = services;
+      if (!service) throw new Error('当前数据模式只提供内置受控示例');
+      const loadLatestPlan = async () => {
+        // CONFIRMED目录由服务按转正时间倒序；保存时间不能代表转正先后。
+        const page = await service.queryPlans({
+          context: 'gis', pageNum: 1, pageSize: 20, state: 'CONFIRMED', signal: token.controller.signal,
+        });
+        if (!token.valid()) return;
+        const latest = page.items.find(plan => plan.state === 'CONFIRMED');
+        if (latest && planSignature(latest) !== loadedPlanSignature) next = await readPlan(latest, token);
+        return latest;
+      };
+      // 两类来源可以并行读取，全部核对成功后才一起发布这一帧。
+      const [planRead, resourceRead] = await Promise.allSettled([loadLatestPlan(), readSavedInterferences(token)]);
       if (!token.valid()) return;
-      // CONFIRMED目录由服务按转正时间倒序；保存时间不能代表转正先后。
-      const latest = page.items.find(plan => plan.state === 'CONFIRMED');
-      const saved = await readSavedInterferences(token);
-      if (!token.valid()) return;
-      if (latest && planSignature(latest) !== loadedPlanSignature) next = await readPlan(latest, token);
-      if (!token.valid()) return;
+      if (planRead.status === 'rejected') throw planRead.reason;
+      if (resourceRead.status === 'rejected') throw resourceRead.reason;
+      const latest = planRead.value, saved = resourceRead.value;
       if (next && latest) { replace(next, true); loadedPlanSignature = planSignature(latest); }
+      else if (latest && loadedPlanSignature === planSignature(latest)) {
+        // 目录的来源变化是当前状态提示，冻结身份和图层继续使用已核验方案。
+        const current = frame.value;
+        const latestNotice = planNotice(current.network, latest.state, latest.sourceChanged);
+        if (latestNotice !== current.notice) frame.value = { ...current, notice: latestNotice };
+      }
       if (saved) { liveInterferences.value = saved; useLiveInterferences.value = true; }
       lastCheckedAt.value = Date.now();
       notice.value = automatic ? '' : latest ? `已刷新：${latest.name} · ${latest.version}` +

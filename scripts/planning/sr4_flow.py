@@ -311,8 +311,10 @@ def _fixed_topology_metrics(links, demands, routes, params, constraints):
         )
         survivability = min(survivability,
                              (len(mandatory_ok) - separated) / max(1, len(mandatory)))
-    routed = [row["primary"] for row in routes["routes"] if row.get("reachable")]
-    relay_hops = max((max(0, len(row["node_path"]) - 2) for row in routed), default=0)
+    routed = [row[key] for row in routes["routes"] if row.get("reachable")
+              for key in ("primary", "backup") if row.get(key)]
+    relay_hops = max((len(row["node_path"]) - 2 for row in routed), default=0)
+    relay_hops = max(0, relay_hops)
     power_w = params["summary"]["total_radiated_w"]
     checks = {
         "mandatory_e2e_connectivity": {
@@ -337,6 +339,42 @@ def _fixed_topology_metrics(links, demands, routes, params, constraints):
         "total_radiated_power_dbm": round(10 * math.log10(max(power_w, 1e-9) * 1000), 2),
     }
     return objectives, checks, len(edges)
+
+
+def _bounded_task_metrics(graph, demands, routes, max_relay_hops):
+    """以实际主路径和满足同一跳数限制的断链重路由计算本任务指标。"""
+    primary = {row["demand_id"]: row["primary"] for row in routes["routes"] if row.get("reachable")}
+    mandatory = [row for row in demands if str(row.get("is_mandatory", "false")).lower() == "true"]
+    reached = [row for row in mandatory if row["demand_id"] in primary]
+    per_link = Counter()
+    for row in reached:
+        path = primary[row["demand_id"]]["link_path"]
+        for link_id in path:
+            if routing.plan_one(graph, row["src_node_id"], row["dst_node_id"], "SHORTEST_PATH",
+                                banned_links=(link_id,), max_radio_hops=max_relay_hops + 1) is None:
+                per_link[link_id] += 1
+    worst_loss = max(per_link.values(), default=0)
+    return {
+        "demands": len(demands),
+        "mandatory": len(mandatory),
+        "connectivity": round(len(primary) / max(1, len(demands)), 4),
+        "mandatory_connectivity": round(len(reached) / max(1, len(mandatory)), 4),
+        "survivability": round((len(reached) - worst_loss) / len(mandatory), 4) if mandatory else 1.0,
+        "worst_single_failure_links": [lid for lid, loss in sorted(per_link.items())
+                                       if loss == worst_loss],
+        "note": "任务视角为实际频点及中继限制内的通联，单链路断开后重新选路；全网抗毁性按全网必要需求。",
+    }
+
+
+def _meets_required_paths(checks, task, constraints, *, task_scope):
+    """任务必要需求必须给出合规主路径，任务抗毁门槛沿用所选评估范围。"""
+    if task["mandatory"] and task["mandatory_connectivity"] < constraints["mandatory_e2e_connectivity"]:
+        checks["mandatory_e2e_connectivity"].update(
+            value=min(task["mandatory_connectivity"], checks["mandatory_e2e_connectivity"]["value"]),
+            **{"pass": False})
+    if task_scope:
+        checks["survivability"].update(value=task["survivability"],
+            **{"pass": task["survivability"] >= constraints["survivability_threshold"]})
 
 
 def _actual_link_margins(stations, links, terrain, frequency, ftasks, params,
@@ -418,13 +456,15 @@ def _check_candidate(pb, solution, stations, nodes, devices, models, antennas,
                      terrain, demands, opt_demands, strategy, preset, pool_rows,
                      metrics_rows, constraints, *, interference_rows=None,
                      channel_preference=None, optimize_bindings=False, search_checkpoint=None,
-                     channel_admissible=None, radio_anchor=None):
+                     channel_admissible=None, radio_anchor=None, task_scope=False):
     """用实际设备、频点和链路余量复核优化器给出的拓扑。"""
     fm = pb.fm
     links, nodes2, devices2 = rows_from_solution(pb, solution, nodes, devices, models)
     st2 = stations + [fm.stations[i] for i in solution["relays"]]
     graph = routing.graph_from_links(links, metrics_rows)[0]
-    routes = routing.plan_routes(graph, demands, default_strategy=strategy)
+    max_relays = constraints["max_relay_hops"]
+    routes = routing.plan_routes(graph, demands, default_strategy=strategy,
+                                 max_relay_hops=max_relays)
     if radio_anchor is None:
         binding_errors = bind_links_to_devices(
             links, nodes2, devices2, models, demands=demands, routes=routes,
@@ -478,7 +518,7 @@ def _check_candidate(pb, solution, stations, nodes, devices, models, antennas,
                    if float(row["link_margin_db"]) >= params["fade_margin_db"]]
     graph = routing.graph_from_links(route_links, metrics_rows)[0]
     routes = routing.plan_routes(graph, demands, default_strategy=strategy,
-                                 manual_paths=fixed_paths)
+                                 manual_paths=fixed_paths, max_relay_hops=max_relays)
     binding_errors.extend(endpoint_binding_errors(links, demands, routes))
     uplinks = {fm.stations[c].sid: fm.stations[p].sid for c, p in solution["uplinks"].items()}
     _frozen_uplinks(dict(nodes=nodes2, links=links, optimization={"uplinks": uplinks}))
@@ -488,12 +528,18 @@ def _check_candidate(pb, solution, stations, nodes, devices, models, antennas,
                            uplinks=uplinks)
     objectives, checks, usable = _fixed_topology_metrics(
         links, opt_demands, routes, params, constraints)
+    task_metrics = _bounded_task_metrics(graph, demands, routes, max_relays)
+    _meets_required_paths(checks, task_metrics, constraints, task_scope=task_scope)
+    if task_scope:
+        objectives["survivability"] = task_metrics["survivability"]
     score = _candidate_score(objectives, checks, chk, binding_errors, constraints)
+    # 可行优先。对已选关键任务优先寻找有实物、频点、余量及跳数证据的备用路径。
+    score = (*score[:5], -task_metrics["survivability"], -task_metrics["connectivity"], *score[5:])
     return dict(score=score, stations=st2, links=links, nodes=nodes2, devices=devices2,
                 graph=graph, routes=routes, binding_errors=binding_errors,
                 ftasks=ftasks, frequency=freq, caps=caps, params=params, check=chk,
                 objectives=objectives, constraint_check=checks, usable_count=usable,
-                uplinks=uplinks, scenario=scenario)
+                uplinks=uplinks, scenario=scenario, task_metrics=task_metrics)
 
 
 def _candidate_signature(solution, radio_anchor=None):
@@ -557,7 +603,7 @@ def _frozen_frequency_locks(detail, tasks, pool_rows, change):
     return locks
 
 
-def _apply_frozen_routes(routes, graph_links, metrics_rows, change):
+def _apply_frozen_routes(routes, graph_links, metrics_rows, change, max_relay_hops):
     """按精确物理链路重算主备路径指标，而非复制预览指标。"""
     by_demand = {row["demand_id"]: row for row in routes["routes"]}
     banned = set(change["detail"]["banned_links"])
@@ -575,12 +621,19 @@ def _apply_frozen_routes(routes, graph_links, metrics_rows, change):
             calculated, errors = routing.check_manual_path(graph, path["node_path"])
             if errors or calculated["link_path"] != path["link_path"]:
                 raise ValueError("采纳路径未精确关联冻结物理链路")
+            if calculated["hop_count"] > max_relay_hops + 1:
+                raise ValueError(f"采纳路径中继跳数超过 {max_relay_hops} 跳")
             actual[key] = calculated
         actual["reachable"] = actual["primary"] is not None
+        if actual["reachable"]:
+            actual.pop("unreachable_reason", None)
+            actual.pop("mandatory", None)
         actual["backup_type"] = requested.get("backup_type", "NONE")
         actual["single_point_risks"] = routing.single_point_risks(
             routing.graph_from_links([row for row in graph_links if row["link_id"] not in banned], metrics_rows)[0],
-            actual["primary"]["node_path"][0], actual["primary"]["node_path"][-1], actual["primary"]) if actual["primary"] else []
+            actual["primary"]["node_path"][0], actual["primary"]["node_path"][-1], actual["primary"],
+            max_radio_hops=max_relay_hops + 1) if actual["primary"] else []
+    routes["unreachable_demand_ids"] = [row["demand_id"] for row in routes["routes"] if not row["reachable"]]
 
 
 def run_from_parent(parent_snapshot, adjustment, device_refs, task_id, demand_rows,
@@ -663,11 +716,14 @@ def run_from_parent(parent_snapshot, adjustment, device_refs, task_id, demand_ro
     if progress:
         progress(0.45, "电台参数与链路余量已重算")
 
+    required = dict(MO.DEFAULT_CONSTRAINTS)
+    required.update(constraints or {})
+    max_relays = required["max_relay_hops"]
     route_links = [row for row in links if not change or change["type"] != "ROUTE_REBUILD"
                    or row["link_id"] not in change["detail"]["banned_links"]]
     graph = routing.graph_from_links(route_links, metrics_rows)[0]
     routes = routing.plan_routes(graph, demand_rows, default_strategy=strategy,
-                                 manual_paths=adjustment["manual_paths"])
+                                 manual_paths=adjustment["manual_paths"], max_relay_hops=max_relays)
     invalid_paths = [row for row in routes["routes"] if row.get("manual_errors")]
     if invalid_paths:
         raise ValueError("人工路径不可用：" + "；".join(
@@ -678,11 +734,13 @@ def run_from_parent(parent_snapshot, adjustment, device_refs, task_id, demand_ro
         raise ValueError("；".join(device_path_errors))
     scenario = _actual_link_margins(stations, links, terrain, frequency, ftasks, params,
         devices, models, antennas, jam_rows, caps, checkpoint=parent_checkpoint)
+    route_links = [row for row in route_links
+                   if float(row["link_margin_db"]) >= params["fade_margin_db"]]
     graph = routing.graph_from_links(route_links, metrics_rows)[0]
     routes = routing.plan_routes(graph, demand_rows, default_strategy=strategy,
-                                 manual_paths=adjustment["manual_paths"])
+                                 manual_paths=adjustment["manual_paths"], max_relay_hops=max_relays)
     if change and change["type"] == "ROUTE_REBUILD":
-        _apply_frozen_routes(routes, route_links, metrics_rows, change)
+        _apply_frozen_routes(routes, route_links, metrics_rows, change, max_relays)
     if endpoint_binding_errors(links, demand_rows, routes):
         raise ValueError("重算路由端点与精确物理设备绑定不一致")
     check = plan_check.check(freq_result=frequency, freq_tasks=ftasks,
@@ -692,17 +750,18 @@ def run_from_parent(parent_snapshot, adjustment, device_refs, task_id, demand_ro
     if progress:
         progress(0.75, "路由、频率及方案校验已重算")
 
-    required = dict(MO.DEFAULT_CONSTRAINTS)
-    required.update(constraints or {})
     objectives, constraint_check, usable_count = _fixed_topology_metrics(
         links, all_demands, routes, params, required
     )
+    task_metrics = _bounded_task_metrics(graph, demand_rows, routes, max_relays)
+    _meets_required_paths(constraint_check, task_metrics, required, task_scope=False)
     optimization = copy.deepcopy(detail["optimization"])
     optimization["uplinks"] = uplinks
     optimization["best"]["objectives"] = objectives
     optimization["best"]["constraint_check"] = constraint_check
     optimization["best"]["links_usable"] = usable_count
     optimization["tradeoff"] = []
+    optimization["task_view"] = task_metrics
     optimization["feasible"] = (all(item["pass"] for item in constraint_check.values())
                                 and check["passed"])
     # 子方案只重算当前固定拓扑，父方案备选从未逐套重算，不能继承其成功计数。
@@ -895,6 +954,9 @@ def run(task_id=None, preset="TERRAIN", strategy="MAX_RELIABILITY",
     cons = dict(MO.DEFAULT_CONSTRAINTS)
     cons.update(constraints or {})
     opt_demands = demands if (task_id is None or survivability_scope == "TASK") else demands_all
+    max_topology_connectivity = round(sum(
+        row["src_node_id"] in active_nodes and row["dst_node_id"] in active_nodes
+        for row in opt_demands) / len(opt_demands), 4)
     pb = MO.Problem(fm, sol, opt_demands, caps1,
                     survivability_threshold=cons["survivability_threshold"], **problem_options)
     opt = MO.optimize(pb, constraints=cons, pop_size=pop_size, generations=generations,
@@ -926,7 +988,8 @@ def run(task_id=None, preset="TERRAIN", strategy="MAX_RELIABILITY",
             terrain, demands, opt_demands, strategy, preset, pool_rows, metrics_rows, cons,
             interference_rows=jam_rows, channel_preference=preference,
             optimize_bindings=optimize_bindings, search_checkpoint=search.checkpoint,
-            channel_admissible=channel_admissible, radio_anchor=radio_anchor)
+            channel_admissible=channel_admissible, radio_anchor=radio_anchor,
+            task_scope=survivability_scope == "TASK")
         sites = DI.selected_sites(result["nodes"], nodes, cand_rows, checkpoint=deployment_checkpoint)
         issues = DI.final_issues(sites, planning_input, cand_rows, nodes=result["nodes"],
             params=result["params"], terrain=terrain, checkpoint=deployment_checkpoint)
@@ -962,14 +1025,43 @@ def run(task_id=None, preset="TERRAIN", strategy="MAX_RELIABILITY",
             if selected is None or result["score"] < selected["score"]:
                 selected = dict(result, solution=solution)
                 pb, opt = problem, optimization
-            if (result["score"][0] == 0 and result["objectives"]["e2e_connectivity"] == 1.0
+            if (result["score"][0] == 0
+                    and result["objectives"]["e2e_connectivity"] >= max_topology_connectivity
+                    and result["task_metrics"]["survivability"] >= cons["survivability_threshold"]
                     and (requested_solutions == 1 or len(DI.verified_solutions(
                         verified, selected, nodes, cand_rows, requested_solutions,
                         checkpoint=deployment_checkpoint)) >= requested_solutions)):
                 return True
         return False
 
+    def rescreen_margin_for_backup(problem, optimization, solution, result, ceiling):
+        """以优化器已有的余量档位复筛，再尝试修复实际限跳备份。"""
+        if result["task_metrics"]["survivability"] >= cons["survivability_threshold"]:
+            return False
+        reference = solution["m_req"]
+        margins = [float(row["link_margin_db"]) for row in result["links"]
+                   if str(row.get("is_available", "true")).lower() != "false"]
+        alternatives = [level for level in reversed(MO.MARGIN_LEVELS) if level < reference
+                        and any(level <= margin < reference for margin in margins)]
+        for level in alternatives[:1]:
+            before = len(verified)
+            variant = dict(solution, m_req=level,
+                repair_changes=solution.get("repair_changes", []) + [{
+                    "kind": "RESCREEN_SUPPORTED_MARGIN",
+                    "from_margin_db": reference, "to_margin_db": level,
+                }])
+            if consider(problem, optimization, 1, candidates=[variant], ceiling=ceiling):
+                return True
+            for _problem, _optimization, rescoped, reevaluated in verified[before:]:
+                variants = backup_solutions(problem, rescoped, reevaluated, opt_demands, models,
+                    pool_rows, priority_demands=demands, max_variants=2, checkpoint=search.checkpoint)
+                if consider(problem, optimization, len(variants), candidates=variants, ceiling=ceiling):
+                    return True
+        return False
+
     found = consider(pb, opt, 6)
+    if not found and verified:
+        found = rescreen_margin_for_backup(*min(verified, key=lambda row: row[3]["score"]), 18)
     frontier = sorted(verified, key=lambda row: row[3]["score"])[:4]
     for _round in range(3):
         if found or checked >= 20 or not search.checkpoint():
@@ -977,6 +1069,8 @@ def run(task_id=None, preset="TERRAIN", strategy="MAX_RELIABILITY",
         expanded = []
         for problem, optimization, solution, result in frontier:
             proposals = backup_solutions(problem, solution, result, opt_demands, models, pool_rows,
+                                         priority_demands=demands if result["task_metrics"]["survivability"]
+                                         < cons["survivability_threshold"] else (),
                                          max_variants=4, checkpoint=search.checkpoint)
             for proposal in proposals:
                 before = len(verified)
@@ -1013,16 +1107,21 @@ def run(task_id=None, preset="TERRAIN", strategy="MAX_RELIABILITY",
                                   generations=max(8, min(generations // 2, 16)),
                                   checkpoint=deployment_checkpoint)
             if consider(alt_pb, alt_opt, 3):
+                found = True
                 break
 
     # 为最终实际失效修复预留独立名额，仍受同一单调时钟截止时间约束。
     frontier = sorted(verified, key=lambda row: row[3]["score"])[:1]
+    if not found and frontier:
+        found = rescreen_margin_for_backup(*frontier[0], 30)
     for _round in range(4):
-        if (selected["score"][0] == 0 and not selected["params"]["failed_links"]) or checked >= 40 or not search.checkpoint():
+        if found or (selected["score"][0] == 0 and not selected["params"]["failed_links"]) or checked >= 40 or not search.checkpoint():
             break
         expanded = []
         for problem, optimization, solution, result in frontier:
             proposals = backup_solutions(problem, solution, result, opt_demands, models, pool_rows,
+                                         priority_demands=demands if result["task_metrics"]["survivability"]
+                                         < cons["survivability_threshold"] else (),
                                          max_variants=1, checkpoint=search.checkpoint)
             proposals += physical_parent_solutions(search, problem, solution, result, opt_demands, models, pool_rows)
             # 每层留预算给组合后的下一次修复，不在第一层耗尽全部终选名额。
@@ -1033,12 +1132,12 @@ def run(task_id=None, preset="TERRAIN", strategy="MAX_RELIABILITY",
                 proposal_edges = Counter((frozenset((problem.sid[a], problem.sid[b])), band)
                                          for a, b, band in proposal["links"])
                 is_prune = proposal_edges <= previous_edges
-                consider(problem, optimization, 1, candidates=[proposal], ceiling=40,
-                         radio_anchor=result if is_prune else None)
+                found = consider(problem, optimization, 1, candidates=[proposal], ceiling=40,
+                                 radio_anchor=result if is_prune else None)
                 expanded.extend(verified[before:])
-                if (selected["score"][0] == 0 and not selected["params"]["failed_links"]) or checked >= 40 or not search.checkpoint():
+                if found or (selected["score"][0] == 0 and not selected["params"]["failed_links"]) or checked >= 40 or not search.checkpoint():
                     break
-            if (selected["score"][0] == 0 and not selected["params"]["failed_links"]) or checked >= 40 or not search.checkpoint():
+            if found or (selected["score"][0] == 0 and not selected["params"]["failed_links"]) or checked >= 40 or not search.checkpoint():
                 break
         if not expanded:
             break
@@ -1078,7 +1177,6 @@ def run(task_id=None, preset="TERRAIN", strategy="MAX_RELIABILITY",
     described["bridges"] = len(actual_context["bridges"])
     described["worst_single_failure"] = ({"link": list(actual_context["cuts"][0]["edge"])}
                                           if actual_context["cuts"] else None)
-    task_objectives, task_checks, _task_usable = _fixed_topology_metrics(links, demands, routes, params, cons)
     failed_constraints = [key for key, row in constraint_check.items()
                           if not row["pass"]]
     if not chk["passed"]:
@@ -1122,12 +1220,7 @@ def run(task_id=None, preset="TERRAIN", strategy="MAX_RELIABILITY",
                                  }),
                                  survivability_scope=("TASK" if task_id and survivability_scope == "TASK"
                                                       else "NETWORK"),
-                                 task_view=({"demands": len(demands), "mandatory": sum(
-                                     str(row.get("is_mandatory", "false")).lower() == "true" for row in demands),
-                                     "connectivity": task_objectives["e2e_connectivity"],
-                                     "mandatory_connectivity": task_checks["mandatory_e2e_connectivity"]["value"],
-                                     "survivability": task_objectives["survivability"],
-                                     "note": "实际频点任务视角，仅供参考；硬约束仍按全网必要需求"} if task_id else None),
+                                 task_view=selected["task_metrics"] if task_id else None,
                                  best=described,
                                  tradeoff=[dict(MO.describe(pb, e, opt["constraints"]),
                                                 evaluation_basis="REPRESENTATIVE_FREQUENCY_PRESELECTION")

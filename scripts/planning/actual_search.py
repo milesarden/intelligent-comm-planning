@@ -2,6 +2,7 @@
 import copy
 import itertools
 import time
+from collections import defaultdict, deque
 from input_limits import MAX_COMPLETE_CHECKS
 
 import frequency as FQ
@@ -110,7 +111,65 @@ def failure_context(links, demands, required):
                              for key in ("node_a_id", "node_b_id")}}
 
 
-def backup_solutions(problem, solution, result, demands, models, pool_rows, *, max_variants=4, checkpoint=None):
+def _bounded_repair_pairs(result, demands):
+    """在失效边两侧的限跳邻域找一条可缩短路径的台站对。"""
+    routes = result.get("routes", {})
+    limit = routes.get("max_relay_hops")
+    if limit is None:
+        return {}
+    max_links = limit + 1
+    required_margin = result["params"]["fade_margin_db"]
+    adjacent = defaultdict(list)
+    for row in result["links"]:
+        if (str(row.get("is_available", "true")).lower() != "false"
+                and float(row["link_margin_db"]) >= required_margin):
+            a, b, lid = row["node_a_id"], row["node_b_id"], row["link_id"]
+            adjacent[a].append((b, lid))
+            adjacent[b].append((a, lid))
+    existing = {row["demand_id"]: row for row in routes["routes"]}
+
+    def distances(root, removed):
+        distance = {root: 0}
+        pending = deque([root])
+        while pending:
+            node = pending.popleft()
+            hops = distance[node] + 1
+            if hops > max_links:
+                continue
+            for neighbor, edge in adjacent[node]:
+                if edge != removed and neighbor not in distance:
+                    distance[neighbor] = hops
+                    pending.append(neighbor)
+        return distance
+
+    scores = defaultdict(lambda: (0, 0))
+    for demand in demands:
+        if str(demand.get("is_mandatory", "false")).lower() != "true":
+            continue
+        src, dst = demand["src_node_id"], demand["dst_node_id"]
+        route = existing.get(demand["demand_id"], {})
+        primary = route.get("primary")
+        for removed in primary["link_path"] if primary else (None,):
+            near_src = distances(src, removed)
+            near_dst = distances(dst, removed)
+            if dst in near_src:
+                continue
+            best_hops = {}
+            for a, left in near_src.items():
+                for b, right in near_dst.items():
+                    hops = left + 1 + right
+                    if a == b or hops > max_links:
+                        continue
+                    pair = tuple(sorted((a, b)))
+                    best_hops[pair] = min(hops, best_hops.get(pair, max_links))
+            for pair, hops in best_hops.items():
+                count, sum_hops = scores[pair]
+                scores[pair] = count + 1, sum_hops + hops
+    return dict(scores)
+
+
+def backup_solutions(problem, solution, result, demands, models, pool_rows, *,
+                     priority_demands=(), max_variants=4, checkpoint=None):
     """只在本次已有配置内补跨割边，端口不足时仅替换非关键备份。"""
     links = solution["links"]
     required = result["params"]["fade_margin_db"]
@@ -164,32 +223,42 @@ def backup_solutions(problem, solution, result, demands, models, pool_rows, *, m
                     nets.setdefault((station_of[node], task.band), set()).add(task.task_id)
         return all(len(required_nets) <= len(radios.get(key, [])) for key, required_nets in nets.items())
 
-    sides = [cut["side"] for cut in context["cuts"][:4]]
+    priority = failure_context(result["links"], priority_demands, required) if priority_demands else None
+    sides = [cut["side"] for cut in (priority or {}).get("cuts", [])[:2]]
+    sides.extend(cut["side"] for cut in context["cuts"][:4] if cut["side"] not in sides)
     sides.extend({node for node, component in context["component"].items()
                   if component == context["component"][row["src_node_id"]]}
                  for row in context["disconnected"][:2])
     # 多座割轮流给候选，避免第一座割占满有限实际核验名额。
-    ranked_sides = []
-    for side in sides:
-        crossing = []
-        for a in sorted(active):
-            sa = problem.fm.stations[a]
-            for b in sorted(active):
-                sb = problem.fm.stations[b]
-                if a >= b or (sa.sid in side) == (sb.sid in side):
-                    continue
-                if checkpoint and not checkpoint():
-                    return proposals
-                for band in sorted(set(sa.radio) & set(sb.radio)):
-                    if ((a, b, band) in present or not E.relation_allowed(sub(a), sub(b), band)
-                            or E.is_peer_pair(sub(a), sub(b)) and not E.peer_link_allowed(a, b, groups, solution["uplinks"])):
-                        continue
-                    allowed = [channel for channel in pool.of_band(band) if all(
-                        any(float(model["freq_min_khz"]) <= channel["freq_khz"] <= float(model["freq_max_khz"])
-                            for model in radios.get((index, band), [])) for index in (a, b))]
-                    if allowed:
-                        crossing.append((haversine_m(sa.lon, sa.lat, sb.lon, sb.lat), a, b, band))
-        ranked_sides.append(sorted(crossing)[:8])
+    channels = {band: [row["freq_khz"] for row in pool.of_band(band)] for band in E.BANDS}
+    available = {}
+    for (index, band), inventory in radios.items():
+        ranges = [(float(row["freq_min_khz"]), float(row["freq_max_khz"])) for row in inventory]
+        available[index, band] = {f for f in channels[band] if any(lo <= f <= hi for lo, hi in ranges)}
+    short_pairs = _bounded_repair_pairs(result, priority_demands) if priority_demands else {}
+    shortcuts = []
+    ranked_sides = [[] for _ in sides]
+    for a, b in itertools.combinations(sorted(active), 2):
+        sa, sb = problem.fm.stations[a], problem.fm.stations[b]
+        across = [i for i, side in enumerate(sides) if (sa.sid in side) != (sb.sid in side)]
+        gain, hops = short_pairs.get(tuple(sorted((sa.sid, sb.sid))), (0, 0))
+        if not across and not gain:
+            continue
+        if checkpoint and not checkpoint():
+            return proposals
+        for band in sorted(set(sa.radio) & set(sb.radio)):
+            if ((a, b, band) in present or not E.relation_allowed(sub(a), sub(b), band)
+                    or E.is_peer_pair(sub(a), sub(b)) and not E.peer_link_allowed(a, b, groups, solution["uplinks"])
+                    or not available.get((a, band), set()).intersection(available.get((b, band), set()))):
+                continue
+            candidate = (haversine_m(sa.lon, sa.lat, sb.lon, sb.lat), a, b, band)
+            if gain:
+                shortcuts.append((-gain, hops, candidate))
+            for index in across:
+                ranked_sides[index].append(candidate)
+    ranked_sides = [sorted(candidates)[:8] for candidates in ranked_sides]
+    if shortcuts:
+        ranked_sides.insert(0, [candidate for _gain, _hops, candidate in sorted(shortcuts)[:8]])
     for rank in range(8):
         for crossing in ranked_sides:
             if rank >= len(crossing):

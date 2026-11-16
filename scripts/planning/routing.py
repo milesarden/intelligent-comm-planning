@@ -137,7 +137,8 @@ def _weight(info, strategy):
     raise ValueError("未知策略：%s（可选 %s）" % (strategy, "/".join(STRATEGIES)))
 
 
-def _dijkstra(g, src_vs, dst_vs, strategy, banned_nodes=(), banned_links=()):
+def _dijkstra(g, src_vs, dst_vs, strategy, banned_nodes=(), banned_links=(),
+              max_radio_hops=None):
     """多源多汇 Dijkstra。返回 (顶点路径, 边路径) 或 (None, None)。"""
     banned_nodes = set(banned_nodes)
     banned_links = set(banned_links)
@@ -148,18 +149,19 @@ def _dijkstra(g, src_vs, dst_vs, strategy, banned_nodes=(), banned_links=()):
     for v in src_vs:
         if g.vkey[v][0] in banned_nodes:
             continue
-        dist[v] = 0.0
-        heapq.heappush(pq, (0.0, v))
+        dist[(v, 0)] = 0.0
+        heapq.heappush(pq, (0.0, v, 0))
     while pq:
-        d, v = heapq.heappop(pq)
-        if d > dist.get(v, float("inf")) + 1e-12:
+        d, v, hops = heapq.heappop(pq)
+        state = (v, hops)
+        if d > dist.get(state, float("inf")) + 1e-12:
             continue
         if v in dst:
             path = [v]
             edges = []
-            while v in prev:
-                v, info = prev[v]
-                path.append(v)
+            while state in prev:
+                state, info = prev[state]
+                path.append(state[0])
                 edges.append(info)
             path.reverse()
             edges.reverse()
@@ -169,11 +171,17 @@ def _dijkstra(g, src_vs, dst_vs, strategy, banned_nodes=(), banned_links=()):
                 continue
             if info["link_id"] in banned_links:
                 continue
+            next_hops = hops
+            if max_radio_hops is not None and info["kind"] == "RADIO":
+                next_hops += 1
+                if next_hops > max_radio_hops:
+                    continue
+            next_state = (nb, next_hops)
             nd = d + _weight(info, strategy)
-            if nd < dist.get(nb, float("inf")) - 1e-12:
-                dist[nb] = nd
-                prev[nb] = (v, info)
-                heapq.heappush(pq, (nd, nb))
+            if nd < dist.get(next_state, float("inf")) - 1e-12:
+                dist[next_state] = nd
+                prev[next_state] = (state, info)
+                heapq.heappush(pq, (nd, nb, next_hops))
     return None, None
 
 
@@ -207,7 +215,7 @@ def _summarize(g, vpath, edges):
 
 
 def plan_one(g, src_sid, dst_sid, strategy="MAX_RELIABILITY",
-             banned_nodes=(), banned_links=()):
+             banned_nodes=(), banned_links=(), *, max_radio_hops=None):
     """单条需求的主用路由。不可达返回 None。"""
     if not g.has_node(src_sid) or not g.has_node(dst_sid):
         return None
@@ -217,13 +225,14 @@ def plan_one(g, src_sid, dst_sid, strategy="MAX_RELIABILITY",
                     min_link_margin_db=None, reliability=1.0,
                     bottleneck_link_id=None)
     vpath, edges = _dijkstra(g, g.vertices_of(src_sid), g.vertices_of(dst_sid),
-                             strategy, banned_nodes, banned_links)
+                             strategy, banned_nodes, banned_links, max_radio_hops)
     if vpath is None:
         return None
     return _summarize(g, vpath, edges)
 
 
-def backup_of(g, src_sid, dst_sid, primary, strategy="MAX_RELIABILITY"):
+def backup_of(g, src_sid, dst_sid, primary, strategy="MAX_RELIABILITY", *,
+              max_radio_hops=None):
     """备用路由。
 
     先求**节点不相交**（避开主路由所有中间节点）——这才真正规避单点故障；
@@ -232,21 +241,25 @@ def backup_of(g, src_sid, dst_sid, primary, strategy="MAX_RELIABILITY"):
     """
     mids = set(primary["node_path"][1:-1])
     if mids:
-        r = plan_one(g, src_sid, dst_sid, strategy, banned_nodes=mids)
+        r = plan_one(g, src_sid, dst_sid, strategy, banned_nodes=mids,
+                     max_radio_hops=max_radio_hops)
         if r:
             return r, "NODE_DISJOINT"
     r = plan_one(g, src_sid, dst_sid, strategy,
-                 banned_links=set(primary["link_path"]))
+                 banned_links=set(primary["link_path"]),
+                 max_radio_hops=max_radio_hops)
     if r:
         return r, "LINK_DISJOINT"
     return None, "NONE"
 
 
-def single_point_risks(g, src_sid, dst_sid, primary, strategy="MAX_RELIABILITY"):
+def single_point_risks(g, src_sid, dst_sid, primary, strategy="MAX_RELIABILITY", *,
+                       max_radio_hops=None):
     """逐个试掉主路由的中间节点，找出「一掉就断」的单点。"""
     risks = []
     for sid in primary["node_path"][1:-1]:
-        if plan_one(g, src_sid, dst_sid, strategy, banned_nodes={sid}) is None:
+        if plan_one(g, src_sid, dst_sid, strategy, banned_nodes={sid},
+                    max_radio_hops=max_radio_hops) is None:
             risks.append(sid)
     return risks
 
@@ -352,10 +365,11 @@ def _component(g, sid):
 
 
 def plan_routes(g, demands, default_strategy="MAX_RELIABILITY",
-                manual_paths=None, need_backup=True):
+                manual_paths=None, need_backup=True, *, max_relay_hops=None):
     """批量规划。demands 为 comm_demand.csv 的行。"""
     manual = {m["demand_id"]: m["node_path"] for m in (manual_paths or [])}
     routes, unreachable = [], []
+    max_radio_hops = None if max_relay_hops is None else max_relay_hops + 1
     for d in demands:
         did = d["demand_id"]
         src, dst = d["src_node_id"], d["dst_node_id"]
@@ -363,25 +377,38 @@ def plan_routes(g, demands, default_strategy="MAX_RELIABILITY",
         rec = dict(demand_id=did, strategy=strategy)
         if did in manual:
             pr, errs = check_manual_path(g, manual[did], strategy)
+            if pr is not None and max_radio_hops is not None and pr["hop_count"] > max_radio_hops:
+                pr = None
+                errs = [f"人工路径中继跳数超过 {max_relay_hops} 跳"]
             rec["manual_errors"] = errs
         else:
-            pr, errs = plan_one(g, src, dst, strategy), []
+            pr = plan_one(g, src, dst, strategy, max_radio_hops=max_radio_hops)
         if pr is None:
             rec.update(reachable=False, primary=None, backup=None,
                        backup_type="NONE")
+            if max_radio_hops is not None:
+                rec["mandatory"] = str(d.get("is_mandatory", "false")).lower() == "true"
+                rec["unreachable_reason"] = (
+                    f"无满足最多 {max_relay_hops} 跳中继限制的可用路径"
+                    if did not in manual else "人工路径未通过校验"
+                )
             unreachable.append(did)
             routes.append(rec)
             continue
         rec.update(reachable=True, primary=pr)
         if need_backup and pr["hop_count"] > 0:
-            bk, bt = backup_of(g, src, dst, pr, strategy)
+            bk, bt = backup_of(g, src, dst, pr, strategy, max_radio_hops=max_radio_hops)
             rec.update(backup=bk, backup_type=bt)
-            rec["single_point_risks"] = single_point_risks(g, src, dst, pr, strategy) \
+            rec["single_point_risks"] = single_point_risks(
+                g, src, dst, pr, strategy, max_radio_hops=max_radio_hops) \
                 if bt == "NONE" else []
         else:
             rec.update(backup=None, backup_type="NONE", single_point_risks=[])
         routes.append(rec)
-    return dict(routes=routes, unreachable_demand_ids=unreachable)
+    result = dict(routes=routes, unreachable_demand_ids=unreachable)
+    if max_relay_hops is not None:
+        result["max_relay_hops"] = max_relay_hops
+    return result
 
 
 # ---------------------------------------------------------------- 建图入口

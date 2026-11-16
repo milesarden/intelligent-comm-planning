@@ -21,6 +21,7 @@ normal 恒为 damaged 的子集；两者的差就是「编成不允许但物理�
 import math
 import os
 import sys
+from bisect import bisect_right
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -127,7 +128,7 @@ def radio_from_device(device, model, antenna, filler=None):
                 fmax=float(model["freq_max_khz"]))
 
 
-def link_margin(terrain, sa, sb, band, freq_khz=None):
+def link_margin(terrain, sa, sb, band, freq_khz=None, hf_loss_cache=None):
     """算一条链路的余量 dB。两端都必须持有该频段，否则是调用方的错。"""
     ra, rb = sa.radio[band], sb.radio[band]
     f = freq_khz or representative_freq(ra, rb, band)
@@ -137,7 +138,15 @@ def link_margin(terrain, sa, sb, band, freq_khz=None):
     pa, pb = (sa.lon, sa.lat), (sb.lon, sb.lat)
     if band == E.HF:
         pat = "NVIS" if "NVIS" in (ra["pattern"], rb["pattern"]) else "OMNI"
-        pl, los, clr, dist = hf_path_loss(terrain, pa, pb, f, pat)
+        if hf_loss_cache is None:
+            pl, _los, _clr, dist = hf_path_loss(terrain, pa, pb, f, pat)
+        else:
+            key = (pa, pb, f, pat)
+            loss = hf_loss_cache.get(key)
+            if loss is None:
+                loss = hf_path_loss(terrain, pa, pb, f, pat)
+                hf_loss_cache[key] = loss
+            pl, _los, _clr, dist = loss
         svc = "话音"
     else:
         pl, los, clr, dist = vuhf_path_loss(terrain, pa, pb, f,
@@ -157,7 +166,7 @@ class FeasibilityMatrix:
     """
 
     def __init__(self, stations, terrain, margin_min=DEFAULT_MARGIN_MIN, verbose=False,
-                 candidate_pairs=True, checkpoint=None):
+                 candidate_pairs=True, checkpoint=None, defer_blocked_candidates=False):
         """candidate_pairs=False 时**跳过候选点两两之间**的传播计算。
 
         规模测试实测：1100 候选 × 4 类型 + 132 台站 = 4532 个台站，
@@ -174,34 +183,47 @@ class FeasibilityMatrix:
         self.index = {s.sid: i for i, s in enumerate(self.stations)}
         self.normal = {}          # band -> [bitmask per station index]
         self.damaged = {}
+        self._deferred = {}
         self.margins = {}         # (i, j, band) -> margin dB，i < j
         self._stats = {}
-        self._build(terrain, verbose, candidate_pairs)
+        self._build(terrain, verbose, candidate_pairs, defer_blocked_candidates and not verbose)
 
-    def _build(self, terrain, verbose, candidate_pairs=True):
+    def _build(self, terrain, verbose, candidate_pairs, defer_blocked_candidates):
         n = len(self.stations)
+        subtypes = {station.subtype for station in self.stations}
         for band in E.BANDS:
             holders = [i for i, s in enumerate(self.stations) if s.has(band)]
+            existing_holders = [i for i in holders if not self.stations[i].is_candidate]
+            allowed = {(a, b): E.relation_allowed(a, b, band) for a in subtypes for b in subtypes}
             dmg = [0] * n
             nml = [0] * n
+            pending = [0] * n
             cnt_phys = cnt_norm = cnt_far = 0
-            for ii in range(len(holders)):
+            for i in holders:
                 if self.checkpoint:
                     self.checkpoint()
-                i = holders[ii]
                 sa = self.stations[i]
-                for jj in range(ii + 1, len(holders)):
+                # P1 只比较现有与候选，预先避开候选之间不会计算的组合。
+                comparison = existing_holders if not candidate_pairs and sa.is_candidate else holders
+                # 同一候选地点可以配不同型号，传播损耗只在实际频率、坐标和传播方式
+                # 相同的情况下复用。设备功率、增益、灵敏度和带宽仍逐对计算。
+                hf_loss = {} if band == E.HF and not candidate_pairs else None
+                for j in comparison[bisect_right(comparison, i):]:
                     if self.checkpoint:
                         self.checkpoint()
-                    j = holders[jj]
                     sb = self.stations[j]
-                    if not candidate_pairs and sa.is_candidate and sb.is_candidate:
+                    normal_allowed = allowed[sa.subtype, sb.subtype]
+                    # 被编成规则排除的候选连线不能参与正常规划。仅在查询损伤工况、
+                    # 指定链路余量或物理可行性统计时再按同一模型计算。
+                    if defer_blocked_candidates and not normal_allowed and (sa.is_candidate or sb.is_candidate):
+                        pending[i] |= 1 << j
+                        pending[j] |= 1 << i
                         continue
                     d = haversine_m(sa.lon, sa.lat, sb.lon, sb.lat)
                     if d > MAX_RANGE_M[band]:
                         cnt_far += 1
                         continue
-                    margin, dist, _ = link_margin(terrain, sa, sb, band)
+                    margin, _dist, _loss = link_margin(terrain, sa, sb, band, None, hf_loss)
                     if margin < self.margin_min:
                         continue
                     # (a)+(b) 通过 → 损伤工况可用
@@ -210,12 +232,13 @@ class FeasibilityMatrix:
                     self.margins[(i, j, band)] = margin
                     cnt_phys += 1
                     # (c) 编成 → 正常工况可用
-                    if E.relation_allowed(sa.subtype, sb.subtype, band):
+                    if normal_allowed:
                         nml[i] |= 1 << j
                         nml[j] |= 1 << i
                         cnt_norm += 1
             self.damaged[band] = dmg
             self.normal[band] = nml
+            self._deferred[band] = pending
             self._stats[band] = dict(holders=len(holders), physical=cnt_phys,
                                      normal=cnt_norm, out_of_range=cnt_far)
             if verbose:
@@ -223,6 +246,34 @@ class FeasibilityMatrix:
                       "(编成剪掉 %.0f%%)"
                       % (band, len(holders), cnt_phys, cnt_norm,
                          100.0 * (cnt_phys - cnt_norm) / max(1, cnt_phys)))
+
+    def _resolve_pair(self, i, j, band):
+        i, j = min(i, j), max(i, j)
+        pending = self._deferred[band]
+        if not pending[i] & (1 << j):
+            return
+        if self.checkpoint:
+            self.checkpoint()
+        a, b = self.stations[i], self.stations[j]
+        distance = haversine_m(a.lon, a.lat, b.lon, b.lat)
+        if distance > MAX_RANGE_M[band]:
+            self._stats[band]["out_of_range"] += 1
+        else:
+            margin, _distance, _loss = link_margin(self.terrain, a, b, band)
+            if margin >= self.margin_min:
+                self.margins[i, j, band] = margin
+                self.damaged[band][i] |= 1 << j
+                self.damaged[band][j] |= 1 << i
+                self._stats[band]["physical"] += 1
+        pending[i] &= ~(1 << j)
+        pending[j] &= ~(1 << i)
+
+    def _resolve_row(self, i, band):
+        pending = self._deferred[band][i]
+        while pending:
+            low = pending & -pending
+            self._resolve_pair(i, low.bit_length() - 1, band)
+            pending ^= low
 
     def extend_pairs(self, indices):
         """补算给定台站集合内部的两两可行性（建矩阵时跳过的那部分）。
@@ -242,6 +293,10 @@ class FeasibilityMatrix:
                     if self.checkpoint:
                         self.checkpoint()
                     j = hs[jj]
+                    if self._deferred[band][i] & (1 << j):
+                        self._resolve_pair(i, j, band)
+                        added += (i, j, band) in self.margins
+                        continue
                     if (min(i, j), max(i, j), band) in self.margins:
                         continue
                     sb = self.stations[j]
@@ -262,6 +317,8 @@ class FeasibilityMatrix:
 
     # ── 查询 ──
     def neighbors(self, i, band, damaged=False):
+        if damaged:
+            self._resolve_row(i, band)
         mask = (self.damaged if damaged else self.normal)[band][i]
         while mask:
             low = mask & -mask
@@ -269,16 +326,27 @@ class FeasibilityMatrix:
             mask ^= low
 
     def margin_of(self, i, j, band):
-        return self.margins.get((i, j, band) if i < j else (j, i, band))
+        key = (i, j, band) if i < j else (j, i, band)
+        margin = self.margins.get(key)
+        if margin is None and self._deferred[band][i] and self._deferred[band][j]:
+            self._resolve_pair(i, j, band)
+            return self.margins.get(key)
+        return margin
 
     def degree(self, i, band, damaged=False):
+        if damaged:
+            self._resolve_row(i, band)
         return bin((self.damaged if damaged else self.normal)[band][i]).count("1")
 
     def blocked_by_echelon(self, i, band):
         """物理能通、但编成不允许的邻居位图。无解诊断用（方案 4.4）。"""
+        self._resolve_row(i, band)
         return self.damaged[band][i] & ~self.normal[band][i]
 
     def stats(self):
+        for band in E.BANDS:
+            for i in range(len(self.stations)):
+                self._resolve_row(i, band)
         return dict(self._stats)
 
 

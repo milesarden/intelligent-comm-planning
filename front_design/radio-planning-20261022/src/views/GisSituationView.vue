@@ -35,7 +35,7 @@
     <Teleport v-if="controlsTarget" :to="controlsTarget">
       <section class="situation-controls" aria-label="GIS 态势显示设置">
         <h2>态势显示</h2>
-        <label v-if="model.canAutoFollow" class="auto-follow"><input type="checkbox" :checked="model.autoFollow" @change="changeAutoFollow" />每30秒自动跟随最新已转正方案和已保存干扰源</label>
+        <label v-if="model.canAutoFollow" class="auto-follow"><input type="checkbox" :checked="model.autoFollow" @change="changeAutoFollow" />30 秒内自动跟随最新已转正方案和已保存干扰源</label>
         <p v-if="model.canAutoFollow && !model.autoFollow" class="source-note">已暂停自动跟随，重新勾选可恢复。切换历史方案时仅显示原冻结干扰源。</p>
         <p v-if="model.lastCheckedAt" class="source-note">最近核对：{{ lastCheckedTime }}。只读刷新，不启动规划或干扰计算。</p>
         <div class="control-actions">

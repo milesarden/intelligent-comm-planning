@@ -47,7 +47,7 @@
     <div
       v-if="diagnosis.sources.error"
       class="feedback warning"
-      >{{ diagnosis.sources.error }}。来源有效性无法核实，新任务已禁用。</div
+      >{{ sourcesWarningText }}。来源有效性无法核实，新任务已禁用。</div
     >
     <div
       v-else-if="!diagnosis.loading && !diagnosis.sources.plans.length"
@@ -632,6 +632,10 @@ const sourceOptions = computed(() =>
     unavailableReason: 'unavailableReason' in plan ? plan.unavailableReason : null,
   })),
 );
+// 来源提示只规范显示文字；原服务错误、来源门禁与返回码保持。
+const sourcesWarningText = computed(() => diagnosis.sources.error
+  ?.replace('暂无当前已确认的完整方案，请先在网络规划中计算、保存并确认。', '请先在无线网络规划中计算')
+  .replace(/[。.]+$/u, '') ?? '');
 // 确认目标网络后才创建草稿；失败保留原工作区和抽屉选择。
 async function openSource(copy: DiagnosisScenarioVersion | null = null) {
   sourceCopy.value = copy;

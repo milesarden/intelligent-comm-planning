@@ -225,14 +225,17 @@ def test_explicit_python_runtime_overlay_and_new_helper_are_hashed_and_other_pay
     release, tmp_path, _, _, files, _, _ = inputs
     code = {"algorithm-service/app/fault.py": b"updated_fault=True\n",
             "algorithm-service/app/fault_catalog.py": b"new_catalog=True\n",
-            "scripts/diagnosis/sr5.py": b"new_diagnosis=True\n"}
+            "scripts/diagnosis/sr5.py": b"new_diagnosis=True\n",
+            "scripts/planning/routing.py": b"bounded_routes=True\n",
+            "packaging/windows/launcher.py": b"portable_launcher=True\n"}
+    targets = {"launcher.py" if name == "packaging/windows/launcher.py" else "app/" + name: value
+               for name, value in code.items()}
     repo = runtime_repo(tmp_path, code)
     metadata = build(inputs, runtime_sources=list(code), project_root=repo)
     assert metadata["release_scope"] == ["FRONTEND_COMPILED", "EXPLICIT_RUNTIME_SOURCES"]
-    assert metadata["runtime_source_overlays"] == sorted("app/"+name for name in code)
+    assert metadata["runtime_source_overlays"] == sorted(targets)
     with zipfile.ZipFile(metadata["zip"]) as archive:
-        for relative, content in code.items():
-            path = "app/"+relative
+        for path, content in targets.items():
             assert archive.read("Package/"+path) == content
             assert metadata["runtime_source_sha256"][path] == sha(content)
         assert archive.read("Package/runtime/python/python.exe") == files["runtime/python/python.exe"]

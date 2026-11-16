@@ -656,6 +656,8 @@ def _route_measure(sc, lk, route_ctx, bad_links):
         return None, ["路由重构：未提供路由结果"]
     import routing
     g, routes = route_ctx
+    max_relays = routes.get("max_relay_hops")
+    max_radio_hops = None if max_relays is None else max_relays + 1
     through = [r for r in routes["routes"]
                if r.get("reachable") and lk.link_id in (r["primary"] or {}).get("link_path", [])]
     if not through:
@@ -674,12 +676,14 @@ def _route_measure(sc, lk, route_ctx, bad_links):
         d = r["demand_id"]
         src, dst = r["primary"]["node_path"][0], r["primary"]["node_path"][-1]
         strategy = r.get("strategy", "MAX_RELIABILITY")
-        primary = routing.plan_one(safe, src, dst, strategy)
+        primary = routing.plan_one(safe, src, dst, strategy, max_radio_hops=max_radio_hops)
         if primary is None:
             fail.append(d)
             continue
-        backup, backup_type = routing.backup_of(safe, src, dst, primary, strategy)
-        risks = (routing.single_point_risks(safe, src, dst, primary, strategy)
+        backup, backup_type = routing.backup_of(safe, src, dst, primary, strategy,
+                                                max_radio_hops=max_radio_hops)
+        risks = (routing.single_point_risks(safe, src, dst, primary, strategy,
+                                           max_radio_hops=max_radio_hops)
                  if backup is None else [])
         ok.append(dict(demand_id=d, strategy=strategy, reachable=True,
                        primary=primary, backup=backup, backup_type=backup_type,

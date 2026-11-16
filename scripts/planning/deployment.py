@@ -432,7 +432,8 @@ def p1_solve(base_stations, candidate_rows, terrain, types=E.DEPLOYABLE_TYPES,
     all_st = list(base_stations) + pool
     # 候选×候选先不算：贪心每轮只选一两个，那些对算了也白算，选中后再补
     fm = FeasibilityMatrix(all_st, terrain, verbose=verbose,
-                           candidate_pairs=False, checkpoint=checkpoint, **kw)
+                           candidate_pairs=False, checkpoint=checkpoint,
+                           defer_blocked_candidates=True, **kw)
     base_idx = list(range(len(base_stations)))
     cand_idx = list(range(len(base_stations), len(all_st)))
     if verbose:

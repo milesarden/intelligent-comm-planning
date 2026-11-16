@@ -36,7 +36,7 @@ def test_start_opens_versioned_gis_url_and_preserves_credentials(tmp_path, monke
     monkeypatch.setattr(entry, "secure_data_directory", lambda: None)
     monkeypatch.setattr(entry, "available_state", lambda: {"port": 18481, "pid": 1001})
     opened = []
-    monkeypatch.setattr(entry.os, "startfile", opened.append, raising=False)
+    monkeypatch.setattr(entry, "open_entry", opened.append)
     original_read = Path.read_text
     def read(path, *args, **kwargs):
         assert path.name not in ("settings.json", "首次登录账号.txt"), "入口版本不得读取凭据"

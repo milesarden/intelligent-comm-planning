@@ -1,4 +1,4 @@
-"""Windows 便携包控制入口；只管理本目录服务，不结束其他程序。"""
+"""便携包控制入口，只管理本目录的本机服务。"""
 from __future__ import annotations
 
 import argparse
@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import secrets
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -139,6 +140,9 @@ def check_frontend_assets(dist=None):
 
 def secure_data_directory():
     """NTFS 上限制凭据目录；exFAT 无 ACL，明确记录本地保管边界。"""
+    if os.name != "nt":
+        secure_posix_data_directory(DATA)
+        return
     DATA.mkdir(parents=True, exist_ok=True)
     volume = ctypes.create_unicode_buffer(261)
     filesystem = ctypes.create_unicode_buffer(261)
@@ -158,6 +162,17 @@ def secure_data_directory():
     subprocess.run([str(system / "icacls.exe"), str(DATA), "/inheritance:r", "/grant:r",
         "*" + sid.group().decode("ascii") + ":(OI)(CI)F", "*S-1-5-18:(OI)(CI)F"],
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+
+
+def secure_posix_data_directory(directory):
+    """Linux 运行数据由启动服务的本地用户独占。"""
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+        raise PermissionError("本地运行目录必须由当前用户拥有，且不能是符号链接")
+    directory.chmod(0o700)
+    if stat.S_IMODE(directory.stat().st_mode) != 0o700:
+        raise PermissionError("文件系统无法限制凭据目录访问，请使用支持 Linux 权限的本地文件系统")
 
 
 def write_json(path, value):
@@ -233,7 +248,8 @@ def configure(port, key):
         "SR5_STORE_PATH": str(DATA / "fault_scenarios.json"), "SR5_REPORT_DIR": str(folders["reports"]),
         "SR6_STORE_PATH": str(DATA / "sr6_graph.json"),
         "COVERAGE_CACHE_DIR": str(folders["coverage"]), "COVERAGE_TASK_DIR": str(folders["coverage_tasks"]),
-        "TEMP": str(folders["tmp"]), "TMP": str(folders["tmp"]), "PYTHONDONTWRITEBYTECODE": "1",
+        "TEMP": str(folders["tmp"]), "TMP": str(folders["tmp"]), "TMPDIR": str(folders["tmp"]),
+        "PYTHONDONTWRITEBYTECODE": "1",
     })
     for path in (APP, APP / "algorithm-service", APP / "scripts"):
         sys.path.insert(0, str(path))
@@ -328,28 +344,44 @@ def bind_listener(preferred=18480):
     for port in range(preferred, preferred + 100):
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            if os.name == "nt":
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            else:
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             listener.bind(("127.0.0.1", port))
             listener.listen(128)
             return listener, port
         except OSError:
             listener.close()
-    raise RuntimeError("18480—18579 端口均不可用；未停止其他服务")
+    raise RuntimeError(f"{preferred}—{preferred + 99} 端口均不可用；未停止其他服务")
+
+
+def acquire_service_lock(lock):
+    if os.name != "nt":
+        import fcntl
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        return True
+    import msvcrt
+    lock.seek(0)
+    if not lock.read(1):
+        lock.write(b"0")
+        lock.flush()
+    lock.seek(0)
+    try:
+        msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        return False
+    return True
 
 
 def serve():
     check_frontend_assets()
-    import msvcrt
     secure_data_directory()
     with (DATA / "service.lock").open("a+b") as lock:
-        lock.seek(0)
-        if not lock.read(1):
-            lock.write(b"0")
-            lock.flush()
-        lock.seek(0)
-        try:
-            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-        except OSError:
+        if not acquire_service_lock(lock):
             return 0  # 另一启动入口已经持有本包锁。
         listener = None
         state = None
@@ -441,6 +473,14 @@ def frontend_entry_url(port):
     return f"http://127.0.0.1:{port}/?v={quote(version, safe='')}#/situation"
 
 
+def open_entry(url):
+    if os.name == "nt":
+        os.startfile(url)
+    else:
+        import webbrowser
+        webbrowser.open(url)
+
+
 def start(open_browser=True, timeout=180):
     check_frontend_assets()
     secure_data_directory()
@@ -448,9 +488,11 @@ def start(open_browser=True, timeout=180):
     if not current:
         logs = DATA / "logs"
         logs.mkdir(exist_ok=True)
+        process_options = ({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt"
+                           else {"start_new_session": True})
         with (logs / "launcher.log").open("ab") as log:
             child = subprocess.Popen([sys.executable, "-B", str(ROOT / "launcher.py"), "serve"], cwd=ROOT,
-                stdout=log, stderr=log, creationflags=subprocess.CREATE_NO_WINDOW, stdin=subprocess.DEVNULL)
+                stdout=log, stderr=log, stdin=subprocess.DEVNULL, **process_options)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             current = available_state()
@@ -464,7 +506,7 @@ def start(open_browser=True, timeout=180):
     url = frontend_entry_url(current['port'])
     (DATA / "访问地址.txt").write_text(url + "\n", encoding="utf-8")
     if open_browser:
-        os.startfile(url)
+        open_entry(url)
     print("系统已启动：" + url)
     print("已启用本机统一使用入口，无需登录；使用‘停止系统’退出后台服务。")
     return current
@@ -494,7 +536,9 @@ def main():
     parser.add_argument("--no-browser", action="store_true", help="自动化验收不打开用户浏览器")
     args = parser.parse_args()
     if os.name != "nt":
-        parser.error("此便携包仅用于 Windows x64")
+        if sys.platform != "linux":
+            parser.error("此启动入口仅支持 Windows 和 Linux")
+        os.umask(0o077)
     try:
         if args.action == "serve":
             serve()

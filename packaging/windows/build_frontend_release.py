@@ -182,7 +182,9 @@ def runtime_source_files(paths, project_root):
     for name in paths:
         canonical(name)
         parts = PurePosixPath(name).parts
-        if (len(parts) < 3 or parts[:2] not in (("algorithm-service", "app"), ("scripts", "diagnosis"))
+        launcher_source = name == "packaging/windows/launcher.py"
+        allowed_prefixes = (("algorithm-service", "app"), ("scripts", "diagnosis"), ("scripts", "planning"))
+        if (len(parts) < 3 or (not launcher_source and parts[:2] not in allowed_prefixes)
                 or not name.endswith(".py") or any(folded(part) in forbidden for part in parts[2:])
                 or folded(PurePosixPath(name).stem) in forbidden | {"database"}):
             raise RuntimeError("运行源码覆盖超出明确Python白名单：" + name)
@@ -197,7 +199,7 @@ def runtime_source_files(paths, project_root):
                 break
         if not path.is_file() or not path.resolve().is_relative_to(root.resolve()):
             raise RuntimeError("运行源码文件缺失或越界：" + name)
-        result["app/"+name] = path
+        result["launcher.py" if launcher_source else "app/"+name] = path
     return result
 
 
