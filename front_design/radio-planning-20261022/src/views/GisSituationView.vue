@@ -6,6 +6,7 @@
       resource-read
       gis-surface
       readonly-situation
+      terrain-scenes
       :frozen-network="frame.network"
       :terrain-basemap="frame.basemap"
       :frozen-coverage="model.coverage"
